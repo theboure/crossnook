@@ -19,17 +19,21 @@ Currently implemented:
 - FreeType text rendering (UTF-8, Cyrillic, anti-aliasing)
 - UI Core module tree (`src/`): framebuffer, input, graphics, text, and a
   minimal UI state layer composed by `crossnook-ui-test`
+- Library Core: a non-recursive book scanner (EPUB/FB2/TXT by filename)
+  and a library-list UI (paging, row selection, Selected Book screen)
+  composed by `crossnook-library-test`
 
 ## Repository structure
 
 - `testapp/` — hardware test application and host-side integration tests
-- `src/` — reusable module tree (platform / graphics / ui), composed by
-  `crossnook-ui-test`
+- `src/` — reusable module tree (platform / graphics / ui / library),
+  composed by `crossnook-ui-test`
 - `toolchain/` — reproducible ARM build environment
 - `diag/` — diagnostic utilities for the device
 - `docs/` — implementation notes and research
 
-See `docs/crossnook-ui-test.md` (UI Core composition diagnostic) and
+See `docs/crossnook-ui-test.md` (UI Core composition diagnostic),
+`docs/crossnook-library-test.md` (library composition diagnostic) and
 `docs/crossnook-text.md` (FreeType renderer) for details.
 
 ## Hardware

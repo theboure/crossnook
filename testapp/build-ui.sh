@@ -28,6 +28,7 @@ MSYS_NO_PATHCONV=1 docker run --rm \
       -o testapp/crossnook-ui-test \
       src/app/ui-test.c \
       src/ui/ui.c \
+      src/library/library.c \
       src/platform/nook/input.c \
       src/platform/nook/display.c \
       src/graphics/text.c \

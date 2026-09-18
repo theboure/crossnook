@@ -1,35 +1,60 @@
 /*
- * ui.h — minimal UI state layer composing the extracted platform and
- * graphics modules. No framebuffer here: cn_ui_render draws into a
- * cn_canvas; the app decides whether/where to flush it. No FreeType
- * types, no raw input codes, no /dev paths.
+ * ui.h — reusable UI state layer composing the extracted platform,
+ * graphics and library modules. No framebuffer here: cn_ui_render draws
+ * into a cn_canvas; the app decides whether/where to flush it. No
+ * FreeType types, no raw input codes, no /dev paths.
  *
  * States:
- *   CN_UI_HOME        — shows CrossNook / UI Core / [ Open reader test ];
- *                       NEXT (or touch inside the button) -> READER_TEST
- *   CN_UI_READER_TEST — shows Reader test / Page N / Cyrillic sample;
- *                       NEXT/PREV change the page (floor 1),
- *                       BACK/HOME return HOME, touch draws a marker,
- *                       Power held >= 2000 ms requests exit.
+ *   CN_UI_HOME        — shows CrossNook / UI Core / [ Open reader test ]
+ *                       (+ [ Open library ] when a library is attached);
+ *                       NEXT (or touch on a button) opens the target
+ *   CN_UI_READER_TEST — Reader test / Page N / Cyrillic sample; NEXT/PREV
+ *                       change the page (floor 1), BACK/HOME return HOME,
+ *                       touch draws a marker
+ *   CN_UI_LIBRARY     — "CrossNook / Library" book list with highlight,
+ *                       paging and touch selection/activation
+ *   CN_UI_SELECTED_BOOK — diagnostic "Selected book" screen showing the
+ *                       title/format/path (no parsing); BACK returns to
+ *                       the same library position/selection
+ *
+ * Power held >= 2000 ms requests exit from any state.
  */
 #ifndef CN_UI_UI_H
 #define CN_UI_UI_H
 
 #include "graphics/canvas.h"
 #include "graphics/text.h"
+#include "library/library.h"
 #include "platform/nook/input.h"
 
 #define CN_UI_POWER_LONG_MS 2000
 
+/* Library list geometry (600x800 layout). Rows are a fixed 40px pitch
+ * starting at y=168; the footer sits on the LIB_FOOTER_Y baseline. The
+ * row count on screen derives from these three constants. */
+#define CN_UI_LIB_ROW_H     40
+#define CN_UI_LIB_ROW_TOP   168
+#define CN_UI_LIB_FOOTER_Y  750
+
 typedef enum cn_ui_state {
     CN_UI_HOME = 0,
-    CN_UI_READER_TEST
+    CN_UI_READER_TEST,
+    CN_UI_LIBRARY,
+    CN_UI_SELECTED_BOOK
 } cn_ui_state;
 
 typedef struct cn_ui cn_ui;
 
 cn_ui *cn_ui_init(void);
 void   cn_ui_free(cn_ui *ui);
+
+/* Attach a scanned library (borrowed: the UI renders from it and never
+ * frees it — the caller keeps ownership). Resets selection/viewport.
+ * Returns the book count. Passing NULL detaches the library. */
+int cn_ui_set_library(cn_ui *ui, const cn_library *lib);
+
+/* Number of rows that fit on the 600x800 library viewport. */
+int cn_ui_lib_rows(void);
 
 /* Feed one semantic input event. Returns non-zero when the screen
  * content changed and a redraw is warranted. */
@@ -43,6 +68,13 @@ int cn_ui_exit_requested(const cn_ui *ui);
 
 cn_ui_state cn_ui_get_state(const cn_ui *ui);
 int         cn_ui_page(const cn_ui *ui);
+
+/* Library state inspection (selection / viewport / book). */
+const cn_library *cn_ui_library(const cn_ui *ui);
+int               cn_ui_selection(const cn_ui *ui);
+int               cn_ui_viewport(const cn_ui *ui);
+const cn_book    *cn_ui_selected_book(const cn_ui *ui);
+
 const char *cn_ui_state_name(cn_ui_state s);
 
 #endif /* CN_UI_UI_H */
