@@ -1,0 +1,36 @@
+# Build artifacts
+build/
+testapp/crossnook-test
+
+# Temporary / working files
+work/
+
+# Internal AI/LLM project notes
+*master briefing for coding LLM.md
+
+# Compiled binaries / objects
+*.o
+*.a
+*.so
+*.out
+*.elf
+
+# Test/runtime artifacts
+*.bin
+*.log
+*.pid
+testapp/fb-selfcheck.png
+
+# Editor / OS junk
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.swp
+*~
+
+# Toolchain
+toolchain/smoke/smoke
