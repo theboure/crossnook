@@ -6,7 +6,9 @@ Checks (against the 960000-byte RGB565 dump, 600x800, stride 1200):
   2. not all-white (ink pixels present), not all-black (bg pixels present)
   3. ink stays within screen bounds
   4. Latin and Cyrillic sample lines both have ink in their y-bands
-  5. the four SIZE bands (18/24/32/48) differ measurably in ink coverage
+  5. all four size samples render the FULL phrase via the multiline
+     wrap path (expected wrapped-line count + ink + right-edge extent),
+     so truncated/single-line samples fail loudly
   6. title region ("CrossNook") is legible in a coarse ASCII preview
 
 Writes <in>.png preview alongside the dump.
@@ -63,21 +65,51 @@ def main(path):
 
     # deterministic layout for DejaVu Sans (see docs): title ~25-61,
     # caption ~128-141, latin 24px ~165-217 (2 lines), cyrillic 24px
-    # ~225-277 (2 wrapped lines), then SIZE 18/24/32/48 sample blocks
-    # ending by ~660 (48px sample fully visible).
+    # ~225-277 (2 wrapped lines), then a size legend and four samples of
+    # the SAME full phrase wrapped by render_block: 18px=1 line, 24px=2,
+    # 32px=2, 48px=3 lines, completing at y~751 (fully visible).
     latin_band = band_ink(165, 218)
     cyr_band = band_ink(225, 278)
     check(f"Latin line(s) have ink (latin_band={latin_band} > 500)", latin_band > 500)
     check(f"Cyrillic line(s) have ink (cyr_band={cyr_band} > 500)", cyr_band > 500)
-    check(f"48px sample fully visible (maxy={maxy} < 700)", maxy < 700)
+    check(f"all content fully visible (maxy={maxy} < 780)", maxy < 780)
 
-    # the four SIZE sample bands (18/24/32/48) must be present and differ
-    size_bands = [(341, 358), (418, 440), (507, 537), (615, 660)]
-    sample_inks = [band_ink(y0, y1) for (y0, y1) in size_bands]
-    check(f"four SIZE samples present (inks={sample_inks})",
-          all(v > 400 for v in sample_inks))
-    check(f"SIZE sample ink counts differ: {sample_inks}",
-          len(set(sample_inks)) > 1)
+    def region_stats(y0, y1):
+        # contiguous text-row groups (wrapped lines), total ink,
+        # rightmost ink column
+        rows = [y for y in range(y0, y1)
+                if any(ink(x, y) for x in range(W))]
+        groups = 0
+        prev = -10
+        for y in rows:
+            if y - prev > 3:
+                groups += 1          # a new (wrapped) line starts here
+            prev = y
+        ink_n = sum(1 for y in range(y0, y1) for x in range(W)
+                    if ink(x, y))
+        mx = max((x for y in range(y0, y1) for x in range(W)
+                  if ink(x, y)), default=-1)
+        return groups, ink_n, mx
+
+    # Every size must render the full phrase "The quick brown fox jumps
+    # over the lazy dog." through the multiline wrap path: the expected
+    # wrapped line count, a minimum ink floor, and a rightward ink extent
+    # proving the phrase tail reached the end of its last line (a sample
+    # truncated early — no continuation lines — would fail line count /
+    # right-edge checks).
+    sizes = {
+        18: dict(range=(339, 356), lines=1, min_ink=1400, min_maxx=350),
+        24: dict(range=(383, 435), lines=2, min_ink=2400, min_maxx=450),
+        32: dict(range=(469, 539), lines=2, min_ink=4000, min_maxx=450),
+        48: dict(range=(584, 751), lines=3, min_ink=8000, min_maxx=400),
+    }
+    for px, s in sizes.items():
+        groups, ink_n, mx = region_stats(*s["range"])
+        cond = (groups == s["lines"] and ink_n > s["min_ink"]
+                and mx > s["min_maxx"])
+        check(f"{px}px sample: full phrase wrapped "
+              f"(lines={groups}/{s['lines']} ink={ink_n}>{s['min_ink']} "
+              f"right={mx}>{s['min_maxx']})", cond)
 
     # ASCII preview of the title region
     print("\n--- title region (downsampled 4x, '#'=ink) ---")

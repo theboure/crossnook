@@ -27,14 +27,15 @@ build/deploy/validation details.
   no INTERP/Dynamic.
 - Smoke: `SMOKE OK`; latin 36 chars / 0 missing; cyrillic 46 chars /
   0 missing.
-- Render: size 960000, checksum `07fe8e97`, ink 26063 px,
-  bbox (31,25)-(523,660) — inside screen.
+- Render: size 960000, checksum `e45d6ba9`, ink 37754 px,
+  bbox (31,25)-(546,751) — inside screen.
   - not empty, not all-white, not all-black;
   - Latin and Cyrillic lines present;
-  - the four size bands measurably differ;
-  - 48px sample bottom at y=660 (140px margin, fully visible);
+  - each size sample renders the full phrase via multiline wrap
+    (18px = 1, 24/32px = 2, 48px = 3 wrapped lines);
+  - bottom at y=751 (49px margin, fully visible);
   - preview `testapp/fb-text.png` shows a legible title, Latin and
-    Cyrillic lines and four sizes.
+    Cyrillic lines, and the wrapped size samples.
 
 ## On-device validation (PASS — real Nook Simple Touch)
 
@@ -48,12 +49,27 @@ Confirmed on device:
 - multiple font sizes are visibly different;
 - framebuffer refresh works.
 
-One layout defect found on-device and fixed (no rendering-architecture
-changes): the word-wrap code force-broke every short block at its last
-space, doubling the vertical extent and clipping the 48px sample past
-y=800. Wrap now happens only on real width overflow; line-spacing factor
-tightened 6/5 -> 11/10; after the fix the 48px sample ends at y=660.
-Re-validated host-side, deploy repeated.
+Two layout defects found on-device and fixed (both layout-only; the
+FreeType rendering path, RGB565 blending, metrics and fb write are
+unchanged):
+
+1. **Bottom clipping** — the word-wrap code force-broke every short block
+   at its last space, doubling the vertical extent and clipping the last
+   sample past y=800. Wrap now happens only on real width overflow
+   (`i < n`); line-spacing factor tightened 6/5 → 11/10.
+2. **Apparent horizontal truncation of the size samples** — the
+   24/32/48 px samples showed only a few words with no continuation line.
+   Root cause: NOT a renderer clip; the sample strings were deliberately
+   shortened by design (`"The quick brown fox jumps"` / `"The quick brown
+   fox"`), so each rendered as a single complete line. Fixed by rendering
+   the SAME full phrase at all four sizes through `render_block()`, which
+   now wraps them (24px: 2 lines, 32px: 2, 48px: 3; 18px: 1), replacing
+   per-sample `SIZE N` labels with a legend line, and adding host
+   validation asserting the expected wrapped-line count, ink floor, and
+   right-edge extent per size.
+
+Re-validated host-side (`build-text.sh` + `validate-text.py` all green),
+deploy repeated.
 
 ## Encountered during implementation
 

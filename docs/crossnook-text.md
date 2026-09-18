@@ -84,8 +84,19 @@ CrossNook                          (48 px title)
 DejaVu Sans                        (14 px caption)
 The quick brown fox jumps over the lazy dog.     (24 px)
 Съешь ещё этих мягких французских булок, да выпей чаю.  (24 px, wraps)
-SIZE 18 …  SIZE 24 …  SIZE 32 …  SIZE 48 …      (18/24/32/48 px samples)
+size samples: 18 / 24 / 32 / 48 px   (13 px legend)
+The quick brown fox jumps over the lazy dog.  (18 px)
+The quick brown fox jumps over the lazy dog.  (24 px, wraps)
+The quick brown fox jumps over the lazy dog.  (32 px, wraps)
+The quick brown fox jumps over the lazy dog.  (48 px, wraps)
 ```
+
+**Size samples:** the *same* full phrase at all four sizes, rendered
+through the multiline `render_block()` path, so horizontal overflow
+continues onto new wrapped lines instead of being silently clipped
+(18px = 1 line, 24px = 2, 32px = 2, 48px = 3). The 13px legend lists the
+sizes in order. Any future clipping bug therefore shows up as a missing
+or short continuation line.
 
 ## Build + host validation
 
@@ -101,29 +112,44 @@ SMOKE font=test-font.ttf family=DejaVu Sans
 SMOKE latin:    36 chars, 0 missing, 0 bad_utf8 --> OK
 SMOKE cyrillic: 46 chars, 0 missing, 0 bad_utf8 --> OK
 SMOKE OK
-RENDER size=960000 checksum=07fe8e97 ink=26063 bbox=(31,25)-(523,660)
+RENDER size=960000 checksum=e45d6ba9 ink=37754 bbox=(31,25)-(546,751)
 ```
 
-`validate-text.py` asserts: file == 960000 bytes; has ink and background
-(not empty/all-white/all-black); the Latin (y165-217) and Cyrillic
-(y225-277) bands have ink; the four SIZE sample bands (18/24/32/48 px,
-ending at y660) are present and differ measurably; the whole content
-stays inside (0,0)-(600,800) with the 48px sample fully visible
-(ink maxy < 700). It writes `testapp/fb-text.png` for visual inspection.
-Works because the render is byte-deterministic for the fixed font +
-layout.
+`validate-text.py` asserts (11 checks): file == 960000 bytes; has ink and
+background (not empty/all-white/all-black); the Latin (y165-217) and
+Cyrillic (y225-277) bands have ink; all content stays inside the screen
+with maxy < 780; each of the four size samples renders the full phrase
+through the multiline word-wrap path — verified by asserting the expected
+wrapped-line count (18px = 1, 24/32px = 2, 48px = 3), a minimum ink floor
+that excludes truncated samples, and a right-edge ink extent proving the
+phrase tail reached the end of its last line (a sample clipped mid-phrase
+or stuck on one line would fail). It writes `testapp/fb-text.png` for
+visual inspection. Works because the render is byte-deterministic for the
+fixed font + layout.
 
-### Layout-repair note (from the on-device PASS run)
+### Layout-repair notes (from the on-device PASS runs)
 
-On-device the 48px sample was clipped at the bottom. Root cause: the
-word-wrap code broke every line at its last space even when the whole
-line fit, so each short block ("SIZE 18", the 14px caption, ...) was
-force-emitted as two lines and every block downstream shifted down ~2x,
-pushing the last sample past y=800. Fixed by wrapping only on an actual
-width overflow (`i < n`) and tightening the internal line-spacing factor
-(6/5 -> 11/10) and inter-section gaps. The FreeType rendering path,
-blending, metrics and fb write are unchanged; the render re-validated
-with the 48px sample bottom at y=660 (140px margin).
+**First fix (bottom clipping):** On device the 48px sample was clipped at
+the bottom. Root cause: the word-wrap code broke every line at its last
+space even when the whole line fit, so each short block ("SIZE 18", the
+14px caption, ...) was force-emitted as two lines and every block
+downstream shifted down ~2x, pushing the last sample past y=800. Fixed by
+wrapping only on an actual width overflow (`i < n`) and tightening the
+internal line-spacing factor (6/5 → 11/10) and inter-section gaps.
+
+**Second fix (horizontal truncation):** On device the 24/32/48 px size
+samples showed only a few words and no continuation line. Root cause: not
+a renderer clip — the `samples[]` array deliberately used progressively
+shorter strings for larger sizes (`"The quick brown fox jumps"`,
+`"The quick brown fox"`). `render_block` rendered each as a single line,
+so no wrap/continuation appeared. Fixed by rendering the *same* full
+phrase at all four sizes through `render_block()` (which wraps where
+needed), replacing per-sample `SIZE N` labels with a single legend line,
+and adding host validation that asserts the expected wrapped-line count,
+minimum ink, and right-edge extent per size.
+
+Both fixes leave the FreeType rendering path, alpha blending, metrics
+and fb write path unchanged.
 
 ## Deploy to the Nook
 

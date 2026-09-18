@@ -357,16 +357,11 @@ static int render_block(const char *text, int *by, uint16_t fg, uint16_t bg)
 
 static void draw_screen(void)
 {
-    static const int sizes[] = { 18, 24, 32, 48 };
-    static const char *samples[] = {
-        "The quick brown fox jumps over the lazy dog.",
-        "The quick brown fox jumps",
-        "The quick brown fox",
-        "The quick brown fox",
-    };
+    static const char size_legend[] =
+        "size samples:  18 / 24 / 32 / 48 px";
+    static const char size_phrase[] =
+        "The quick brown fox jumps over the lazy dog.";
     int y = MARGIN_TOP;
-    int i;
-    char label[16];
 
     fb_clear();
 
@@ -381,19 +376,27 @@ static void draw_screen(void)
 
     /* required sample lines (Latin + Cyrillic), 24 px */
     y += set_pixel_size(24) + 4;
-    render_block("The quick brown fox jumps over the lazy dog.", &y,
-                 COLOR_BLACK, COLOR_WHITE);
+    render_block(size_phrase, &y, COLOR_BLACK, COLOR_WHITE);
     render_block(CYR_SAMPLE, &y, COLOR_BLACK, COLOR_WHITE);
 
-    /* size samples at ~18/24/32/48 px */
-    for (i = 0; i < 4; i++) {
-        snprintf(label, sizeof label, "SIZE %d", sizes[i]);
-        y += set_pixel_size(13) + 3;
-        render_block(label, &y, COLOR_BLACK, COLOR_WHITE);
+    /* size samples at ~18/24/32/48 px; the SAME full phrase at every size,
+     * rendered through the multiline word-wrap path so horizontal
+     * overflow continues onto new lines instead of being silently
+     * clipped. The legend above lists the sizes in order. */
+    y += set_pixel_size(13) + 2;
+    render_block(size_legend, &y, COLOR_BLACK, COLOR_WHITE);
 
-        y += set_pixel_size(sizes[i]) + 3;
-        render_block(samples[i], &y, COLOR_BLACK, COLOR_WHITE);
-    }
+    y += set_pixel_size(18) + 2;
+    render_block(size_phrase, &y, COLOR_BLACK, COLOR_WHITE);
+
+    y += set_pixel_size(24) + 2;
+    render_block(size_phrase, &y, COLOR_BLACK, COLOR_WHITE);
+
+    y += set_pixel_size(32) + 2;
+    render_block(size_phrase, &y, COLOR_BLACK, COLOR_WHITE);
+
+    y += set_pixel_size(48) + 2;
+    render_block(size_phrase, &y, COLOR_BLACK, COLOR_WHITE);
 }
 
 /* ---- fb write (proven path) ------------------------------------ */
