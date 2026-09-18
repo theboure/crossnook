@@ -4,6 +4,7 @@ testapp/crossnook-test
 testapp/crossnook-text
 testapp/crossnook-ui-test
 testapp/crossnook-library-test
+testapp/crossnook-cre-test
 
 # Temporary / working files
 work/
@@ -25,6 +26,7 @@ work/
 testapp/fb-selfcheck.png
 testapp/fb-ui-*.png
 testapp/fb-library*.png
+testapp/cre-dump/
 
 # Python bytecode cache
 __pycache__/

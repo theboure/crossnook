@@ -22,6 +22,10 @@ Currently implemented:
 - Library Core: a non-recursive book scanner (EPUB/FB2/TXT by filename)
   and a library-list UI (paging, row selection, Selected Book screen)
   composed by `crossnook-library-test`
+- CREngine EPUB Rendering Spike: koreader/crengine (GPL-2.0) opens a real
+  EPUB and lays out + renders readable RGB565 pages for the 600x800
+  framebuffer, as a fully static non-PIE musl binary (`crossnook-cre-test`;
+  host-validated under qemu, see `docs/milestone-crengine-rendering-spike.md`)
 
 ## Repository structure
 
