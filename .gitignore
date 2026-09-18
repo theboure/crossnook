@@ -6,6 +6,7 @@ testapp/crossnook-ui-test
 testapp/crossnook-library-test
 testapp/crossnook-cre-test
 testapp/crossnook-reader-test
+testapp/crossnook-position-test
 
 # Temporary / working files
 work/
@@ -29,6 +30,7 @@ testapp/fb-ui-*.png
 testapp/fb-library*.png
 testapp/cre-dump/
 testapp/reader-dump/
+testapp/position-fixtures/foreign.epub
 
 # Python bytecode cache
 __pycache__/

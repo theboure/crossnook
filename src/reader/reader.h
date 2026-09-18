@@ -41,6 +41,20 @@
 
 typedef struct cn_reader cn_reader;
 
+/* Serializable logical document position. location is an opaque UTF-8 token:
+ * callers may store/copy it, but only the reader layer may interpret it.
+ * progress_10000 is secondary metadata in hundredths of one percent
+ * (0..10000), or -1 when unknown; it is never used as the canonical restore
+ * location.
+ *
+ * Initialize before first use, clear when finished. get/copy replace an
+ * initialized destination and allocate its own location string. clear is
+ * idempotent. A zero-initialized/empty position is safely rejected by goto. */
+typedef struct cn_reader_position {
+    char *location;
+    int   progress_10000;
+} cn_reader_position;
+
 typedef struct cn_reader_config {
     const char *font_path;        /* TTF/OTF to register with CREngine;
                                      NULL = search the standard on-device
@@ -63,6 +77,11 @@ cn_reader *cn_reader_new(const cn_reader_config *cfg);
 
 void cn_reader_free(cn_reader *r);
 
+void cn_reader_position_init(cn_reader_position *position);
+void cn_reader_position_clear(cn_reader_position *position);
+int  cn_reader_position_copy(cn_reader_position *dst,
+                             const cn_reader_position *src);
+
 /* Replace the config. If a document is open this applies the layout
  * options and re-lays out (page count/current page refresh, current page
  * clamped). Returns 0 on success, -1 on invalid argument. */
@@ -80,6 +99,17 @@ int cn_reader_page(const cn_reader *r);  /* 0-based current; 0 when closed */
 int cn_reader_next(cn_reader *r);        /* clamp at last page */
 int cn_reader_prev(cn_reader *r);        /* clamp at page 0 */
 int cn_reader_go(cn_reader *r, int page);/* clamp; returns current page */
+
+/* Capture/restore a logical document location. The canonical location is a
+ * normalized CREngine XPointer kept opaque behind this C API; page number is
+ * only a derived diagnostic. goto returns -1 without moving the reader when
+ * the position is empty, malformed, or cannot be resolved exactly in the
+ * open document. A structurally compatible token from another document may
+ * be indistinguishable; document association belongs to a future progress
+ * store, not to this position value. */
+int cn_reader_get_position(cn_reader *r, cn_reader_position *position);
+int cn_reader_goto_position(cn_reader *r,
+                            const cn_reader_position *position);
 
 /* Render the current page into rgb565, which must point at
  * CN_READER_W*CN_READER_H*2 bytes. Clears to white first. Returns 0 on

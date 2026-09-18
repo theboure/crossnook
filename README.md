@@ -33,6 +33,11 @@ Currently implemented:
   and broken-EPUB activations fall back to the Selected Book screen
   (`crossnook-reader-test`; host-validated under qemu, see
   `docs/milestone-reader-integration.md`)
+- Reader Logical Position / Sync Foundation: the Reader C API can capture,
+  own, copy, and restore an opaque logical document location across close /
+  reopen and pagination-changing relayouts without making page number the
+  canonical position (`crossnook-position-test`; host- and hardware-validated,
+  see `docs/milestone-reader-position.md`)
 
 ## Repository structure
 
