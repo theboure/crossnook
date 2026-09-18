@@ -16,13 +16,21 @@ Currently implemented:
 - touchscreen input
 - host-side QEMU integration testing
 - execution on real Nook Simple Touch hardware
+- FreeType text rendering (UTF-8, Cyrillic, anti-aliasing)
+- UI Core module tree (`src/`): framebuffer, input, graphics, text, and a
+  minimal UI state layer composed by `crossnook-ui-test`
 
 ## Repository structure
 
 - `testapp/` — hardware test application and host-side integration tests
+- `src/` — reusable module tree (platform / graphics / ui), composed by
+  `crossnook-ui-test`
 - `toolchain/` — reproducible ARM build environment
 - `diag/` — diagnostic utilities for the device
 - `docs/` — implementation notes and research
+
+See `docs/crossnook-ui-test.md` (UI Core composition diagnostic) and
+`docs/crossnook-text.md` (FreeType renderer) for details.
 
 ## Hardware
 

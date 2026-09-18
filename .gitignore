@@ -2,6 +2,7 @@
 build/
 testapp/crossnook-test
 testapp/crossnook-text
+testapp/crossnook-ui-test
 
 # Temporary / working files
 work/
@@ -21,6 +22,10 @@ work/
 *.log
 *.pid
 testapp/fb-selfcheck.png
+testapp/fb-ui-*.png
+
+# Python bytecode cache
+__pycache__/
 
 # Editor / OS junk
 .vscode/
