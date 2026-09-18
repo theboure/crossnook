@@ -29,18 +29,29 @@ MSYS_NO_PATHCONV=1 docker run --rm \
     # '~'-terminated temp decoy, are deliberately gitignored on the host).
     bash /io/testapp/library-fixtures/make-fixtures.sh
 
-    arm-linux-musleabi-gcc -static -no-pie -fno-pie -O2 -Wall -Wextra \
-      -Isrc \
-      -I/opt/freetype/include/freetype2 -L/opt/freetype/lib \
+    CFLAGS="-static -no-pie -fno-pie -O2 -Wall -Wextra \
+      -I/io/src -I/opt/freetype/include/freetype2"
+    CXXFLAGS="-std=c++17 -static -no-pie -fno-pie -O2 -Wall -Wextra \
+      -include stdint.h -I/io/src -I/io/src/reader \
+      -I/opt/crengine/include -I/opt/freetype/include/freetype2"
+
+    arm-linux-musleabi-gcc $CFLAGS -c src/app/ui-library-test.c -o /tmp/lib-test.o
+    arm-linux-musleabi-gcc $CFLAGS -c src/ui/ui.c -o /tmp/ui.o
+    arm-linux-musleabi-gcc $CFLAGS -c src/library/library.c -o /tmp/library.o
+    arm-linux-musleabi-gcc $CFLAGS -c src/platform/nook/input.c -o /tmp/input.o
+    arm-linux-musleabi-gcc $CFLAGS -c src/platform/nook/display.c -o /tmp/display.o
+    arm-linux-musleabi-gcc $CFLAGS -c src/graphics/text.c -o /tmp/text.o
+    arm-linux-musleabi-gcc $CFLAGS -c src/graphics/canvas.c -o /tmp/canvas.o
+    arm-linux-musleabi-g++ $CXXFLAGS -c src/reader/reader.cpp -o /tmp/reader.o
+
+    # The UI module now owns an optional reader (reader/reader.cpp); the
+    # fallback paths are exercised without attaching one at runtime.
+    arm-linux-musleabi-g++ -static -no-pie -fno-pie -O2 -Wall -Wextra \
       -o testapp/crossnook-library-test \
-      src/app/ui-library-test.c \
-      src/ui/ui.c \
-      src/library/library.c \
-      src/platform/nook/input.c \
-      src/platform/nook/display.c \
-      src/graphics/text.c \
-      src/graphics/canvas.c \
-      -lfreetype
+      /tmp/lib-test.o /tmp/ui.o /tmp/library.o /tmp/input.o /tmp/display.o \
+      /tmp/text.o /tmp/canvas.o /tmp/reader.o \
+      /opt/crengine/lib/libcrengine.a /opt/freetype/lib/libfreetype.a \
+      /opt/zlib/lib/libz.a /opt/xxhash/lib/libxxhash.a -lm
 
     echo "--- file ---"
     file testapp/crossnook-library-test

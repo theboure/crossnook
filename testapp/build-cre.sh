@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Build + host-validate the CREngine EPUB Rendering Spike
-# (crossnook-cre-test) with the pinned musl toolchain. Requires the
-# crossnook-toolchain image (toolchain/build-smoke.sh); host modes run under
+# Build + host-validate the CREngine EPUB rendering regression
+# (crossnook-cre-test, now consumer of the reusable reader layer
+# src/reader) with the pinned musl toolchain. Requires the crossnook-
+# toolchain image (toolchain/build-smoke.sh); host modes run under
 # qemu-arm. No Nook needed.
 #
-# Renders END-TO-END through CREngine (crengine libcrengine.a opens the EPUB,
-# lays out 600x800 pages, draws into an RGB565 buffer) and validates the
-# pages: dimensions, non-empty ink, page-to-page differences, back-to-PREV
-# determinism, and canary-guarded no-OOB writes.
+# Renders END-TO-END through CREngine (libcrengine.a inside reader.cpp
+# opens the EPUB, lays out 600x800 pages, draws into an RGB565 buffer) and
+# validates the pages: dimensions, non-empty ink, page-to-page differences,
+# back-to-PREV determinism, and canary-guarded no-OOB writes.
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
@@ -19,13 +20,13 @@ if ! docker image inspect "$IMG" >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "==> embedding CREngine stylesheets (cr3/epub/html5.css)"
+echo "==> embedding reader stylesheets (cr3/epub/html5.css)"
 if command -v python >/dev/null 2>&1; then PY=python
 elif command -v python3 >/dev/null 2>&1; then PY=python3
 else PY=""
 fi
 if [ -n "$PY" ]; then
-  $PY "$REPO/testapp/cre-fixtures/embed-css.py" "$REPO/testapp/cre-fixtures/cre_css.h"
+  $PY "$REPO/src/reader/embed-css.py" "$REPO/src/reader/cre_css.h"
 else
   echo "python not found; keeping committed cre_css.h"
 fi
@@ -48,9 +49,15 @@ MSYS_NO_PATHCONV=1 docker run --rm \
 
     arm-linux-musleabi-g++ -std=c++17 -static -no-pie -fno-pie \
       -O2 -Wall -Wextra -include stdint.h \
-      -I/io/testapp -I/io/testapp/cre-fixtures -I/io/src \
+      -I/io/src -I/io/src/reader \
       -I/opt/crengine/include -I/opt/freetype/include/freetype2 \
-      /io/testapp/crossnook-cre-test.cpp input.o display.o canvas.o \
+      -c /io/src/reader/reader.cpp -o reader.o
+
+    arm-linux-musleabi-g++ -std=c++17 -static -no-pie -fno-pie \
+      -O2 -Wall -Wextra -include stdint.h \
+      -I/io/src -I/io/src/reader \
+      -I/opt/crengine/include -I/opt/freetype/include/freetype2 \
+      /io/testapp/crossnook-cre-test.cpp reader.o input.o display.o canvas.o \
       -o /io/testapp/crossnook-cre-test \
       /opt/crengine/lib/libcrengine.a /opt/freetype/lib/libfreetype.a \
       /opt/zlib/lib/libz.a /opt/xxhash/lib/libxxhash.a -lm

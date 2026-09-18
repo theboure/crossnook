@@ -1,19 +1,23 @@
 /*
- * crossnook-cre-test.cpp — CREngine EPUB rendering spike testapp.
+ * crossnook-cre-test.cpp — CREngine EPUB rendering regression testapp.
  *
- * Proves CrossNook can use CREngine (koreader/crengine @ b05cf007) to open a
- * plain EPUB and render readable pages as RGB565 (16bpp) bitmaps for the
- * Nook Simple Touch's 600x800 framebuffer. Renders straight into the existing
- * RGB565 canvas (or a dumb host buffer); CREngine never touches fb0 — only
- * src/platform/nook/display.c does (validated structurally by build-cre.sh).
+ * Consumes the reusable reader layer (src/reader/reader.cpp, C API
+ * reader.h) which embeds the CREngine + stylesheet logic validated on the
+ * real Nook in the CREngine spike. This file keeps the spike's CLI, output
+ * contract and checksum behavior: rendering test.epub with the default
+ * config must produce page-by-page bitmaps identical to the spike (same
+ * stylesheet, engine defaults, same first-Draw layout priming).
+ *
+ * CREngine never touches fb0 — only src/platform/nook/display.c does
+ * (verified structurally by the build scripts).
  *
  * Usage:
  *   crossnook-cre-test <epub>                     device mode (real Nook)
  *   crossnook-cre-test --smoke   <epub>           host smoke assertions
  *   crossnook-cre-test --dump DIR <epub>          host page dumps + manifest
  *
- * Always registers a font first. Font = --font PATH, else /tmp/test-font.ttf
- * then /opt/test-font.ttf (the last two are the on-device install paths).
+ * Always registers a font first. Font = --font PATH, else the reader layer
+ * searches the standard on-device paths (/tmp, /opt).
  *
  * Failure contract: any failure prints "CRE ERROR: ..." to stderr and exits
  * non-zero; the screen is never left blank in device mode.
@@ -23,18 +27,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* crengine headers */
-#include "lvdocview.h"
-#include "lvdrawbuf.h"
-#include "lvfntman.h"
-#include "lvstring.h"
-
-#include "cre_css.h"
-
 extern "C" {
 #include "graphics/canvas.h"
 #include "platform/nook/display.h"
 #include "platform/nook/input.h"
+#include "reader/reader.h"
 }
 
 #define BUF_W 600
@@ -45,21 +42,6 @@ enum mode { MODE_DEVICE, MODE_SMOKE, MODE_DUMP };
 
 static const char *g_font = NULL;
 static const char *g_epub = NULL;
-
-static int find_default_font(void)
-{
-    static const char *cand[] = { "/tmp/test-font.ttf", "/opt/test-font.ttf" };
-    FILE *f;
-    for (int i = 0; i < (int)(sizeof(cand) / sizeof(cand[0])); ++i) {
-        f = fopen(cand[i], "rb");
-        if (f) {
-            fclose(f);
-            g_font = cand[i];
-            return 0;
-        }
-    }
-    return -1;
-}
 
 static int parse_args(int argc, char **argv, enum mode *mode, const char **dump_dir)
 {
@@ -84,7 +66,7 @@ static int parse_args(int argc, char **argv, enum mode *mode, const char **dump_
 }
 
 /* FNV-1a 32-bit over the target buffer. */
-static unsigned checksum_bytes(const lUInt8 *p, size_t n)
+static unsigned checksum_bytes(const uint8_t *p, size_t n)
 {
     unsigned h = 2166136261u;
     for (size_t i = 0; i < n; ++i) {
@@ -94,9 +76,9 @@ static unsigned checksum_bytes(const lUInt8 *p, size_t n)
     return h;
 }
 
-static unsigned long count_ink(const lUInt8 *p, size_t n)
+static unsigned long count_ink(const uint8_t *p, size_t n)
 {
-    const lUInt16 *px = (const lUInt16 *)p;
+    const uint16_t *px = (const uint16_t *)p;
     size_t np = n / 2;
     unsigned long ink = 0;
     for (size_t i = 0; i < np; ++i)
@@ -105,32 +87,32 @@ static unsigned long count_ink(const lUInt8 *p, size_t n)
     return ink;
 }
 
-/* Renders current CRE page into target (memset to white first). */
-static unsigned render_pixel_checksum(LVDocView *doc, lUInt8 *target)
+/* Renders the current reader page into target (memset to white first). */
+static unsigned render_pixel_checksum(cn_reader *r, uint8_t *target)
 {
-    memset(target, 0xFF, BUF_BYTES);
-    LVColorDrawBuf buf(BUF_W, BUF_H, target, 16);
-    doc->Draw(buf);
+    if (cn_reader_render(r, target, BUF_W, BUF_H) != 0) {
+        fprintf(stderr, "CRE ERROR: reader render failed\n");
+        return 0;
+    }
     return checksum_bytes(target, BUF_BYTES);
 }
 
 /* ---- host smoke -------------------------------------------------- */
 
-static int run_smoke(LVDocView *doc)
+static int run_smoke(cn_reader *r)
 {
     int fail = 0;
 
     const size_t GUARD = 64;
-    lUInt8 *base = new lUInt8[GUARD + BUF_BYTES + GUARD];
+    uint8_t *base = new uint8_t[GUARD + BUF_BYTES + GUARD];
     memset(base, 0x5A, GUARD + BUF_BYTES + GUARD);
-    lUInt8 *target = base + GUARD;
+    uint8_t *target = base + GUARD;
 
-    /* First Draw performs layout; only afterwards is the page count valid. */
-    doc->goToPage(0);
-    unsigned m0 = render_pixel_checksum(doc, target);
+    /* The reader layer already primed layout on open; page 0 is current. */
+    unsigned m0 = render_pixel_checksum(r, target);
     unsigned long i0 = count_ink(target, BUF_BYTES);
 
-    const int pages = doc->getPageCount();
+    const int pages = cn_reader_pages(r);
     printf("document loaded: %d pages\n", pages);
     if (pages < 2) {
         fprintf(stderr, "CRE ERROR: book has %d pages (< 2)\n", pages);
@@ -138,12 +120,13 @@ static int run_smoke(LVDocView *doc)
         return 1;
     }
 
-    if (doc->GetWidth() != BUF_W || doc->GetHeight() != BUF_H) {
+    if (CN_READER_W != BUF_W || CN_READER_H != BUF_H ||
+        CN_READER_W * 2 != 1200) {
         fprintf(stderr, "CRE ERROR: unexpected page dims\n");
         delete[] base;
         return 1;
     }
-    printf("layout size=%dx%d\n", doc->GetWidth(), doc->GetHeight());
+    printf("layout size=%dx%d\n", CN_READER_W, CN_READER_H);
 
     printf("page=0 ink=%lu chk=%08x\n", i0, m0);
     if (i0 == 0) {
@@ -153,8 +136,8 @@ static int run_smoke(LVDocView *doc)
 
     unsigned m1 = 0;
     unsigned long i1 = 0;
-    doc->goToPage(1);
-    unsigned c = render_pixel_checksum(doc, target);
+    cn_reader_go(r, 1);
+    unsigned c = render_pixel_checksum(r, target);
     i1 = count_ink(target, BUF_BYTES);
     m1 = c;
     printf("page=1 ink=%lu chk=%08x\n", i1, m1);
@@ -167,8 +150,8 @@ static int run_smoke(LVDocView *doc)
         fail = 1;
     }
 
-    doc->goToPage(0);
-    unsigned m_back = render_pixel_checksum(doc, target);
+    cn_reader_go(r, 0);
+    unsigned m_back = render_pixel_checksum(r, target);
     printf("page=0 back chk=%08x\n", m_back);
     if (m_back != m0) {
         fprintf(stderr, "CRE ERROR: page 0 after PREV differs from first render\n");
@@ -185,9 +168,8 @@ static int run_smoke(LVDocView *doc)
 
     delete[] base;
 
-    LVColorDrawBuf probe(BUF_W, BUF_H, (lUInt8 *)target, 16);
-    if (probe.GetWidth() != BUF_W || probe.GetHeight() != BUF_H ||
-        probe.GetRowSize() != BUF_W * 2) {
+    if (CN_READER_W != CN_FB_W || CN_READER_H != CN_FB_H ||
+        CN_READER_W * 2 != CN_FB_STRIDE || CN_FB_BYTES != BUF_BYTES) {
         fprintf(stderr, "CRE ERROR: buffer geometry mismatch\n");
         fail = 1;
     }
@@ -198,19 +180,15 @@ static int run_smoke(LVDocView *doc)
 
 /* ---- host dump --------------------------------------------------- */
 
-static int run_dump(LVDocView *doc, const char *dir)
+static int run_dump(cn_reader *r, const char *dir)
 {
     char path[1024];
 
-    lUInt8 *target = new lUInt8[BUF_BYTES];
+    uint8_t *target = new uint8_t[BUF_BYTES];
 
-    /* First Draw performs layout; only afterwards is the page count valid. */
-    doc->goToPage(0);
-    render_pixel_checksum(doc, target);
-
-    const int pages = doc->getPageCount();
-    const int w = doc->GetWidth();
-    const int h = doc->GetHeight();
+    const int pages = cn_reader_pages(r);
+    const int w = CN_READER_W;
+    const int h = CN_READER_H;
     const int rsz = BUF_W * 2;
     snprintf(path, sizeof(path), "%s/dump.json", dir);
     FILE *jf = fopen(path, "w");
@@ -225,8 +203,8 @@ static int run_dump(LVDocView *doc, const char *dir)
 
     int dumped = 0;
     for (int p = 0; p < pages && p < 16; ++p) {
-        doc->goToPage(p);
-        unsigned chk = render_pixel_checksum(doc, target);
+        cn_reader_go(r, p);
+        unsigned chk = render_pixel_checksum(r, target);
         char fn[64];
         snprintf(fn, sizeof(fn), "page-%03d.bin", p);
         snprintf(path, sizeof(path), "%s/%s", dir, fn);
@@ -255,7 +233,7 @@ static int run_dump(LVDocView *doc, const char *dir)
 
 /* ---- device mode -------------------------------------------------- */
 
-static int run_device(LVDocView *doc)
+static int run_device(cn_reader *r)
 {
     cn_display *disp = cn_display_open();
     if (!disp) {
@@ -273,17 +251,25 @@ static int run_device(LVDocView *doc)
     }
     printf("inputs=%d\n", cn_input_devices(in));
 
-    int page = 0, want = 0;
     cn_input_ev ev;
     int rc;
     int power_pressed = 0;
 
+    int page = 0, want = 0;
+    const int pages = cn_reader_pages(r);
+
     for (;;) {
         if (want != page) {
             page = want;
-            doc->goToPage(page);
+            cn_reader_go(r, page);
         }
-        render_pixel_checksum(doc, (lUInt8 *)cn_canvas_pixels(c));
+        if (cn_reader_render(r, cn_canvas_pixels(c), BUF_W, BUF_H) != 0) {
+            fprintf(stderr, "CRE ERROR: reader render failed\n");
+            cn_input_close(in);
+            cn_canvas_free(c);
+            cn_display_close(disp);
+            return 1;
+        }
         if (cn_display_flush(disp, cn_canvas_pixels(c)) != CN_FB_BYTES) {
             fprintf(stderr, "CRE ERROR: fb write failed\n");
             cn_input_close(in);
@@ -300,7 +286,7 @@ static int run_device(LVDocView *doc)
             continue;
 
         if (ev.type == CN_INPUT_PAGE_NEXT) {
-            if (page + 1 < (int)doc->getPageCount())
+            if (page + 1 < pages)
                 want = page + 1;
         } else if (ev.type == CN_INPUT_PAGE_PREV) {
             if (page > 0)
@@ -336,37 +322,31 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    if (!g_font && find_default_font() != 0) {
-        fprintf(stderr, "CRE ERROR: no font found (pass --font PATH)\n");
-        return 1;
-    }
+    cn_reader_config cfg;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.font_path = g_font;          /* NULL -> reader searches /tmp,/opt */
 
-    InitFontManager(lString8(""));
-    if (!fontMan->RegisterFont(lString8(g_font))) {
-        fprintf(stderr, "CRE ERROR: font register failed (%s)\n", g_font);
+    cn_reader *r = cn_reader_new(&cfg);
+    if (!r) {
+        fprintf(stderr, "CRE ERROR: reader init failed\n");
         return 1;
     }
     printf("CRE open OK\n");
 
-    LVDocView *doc = new LVDocView(16);
-    doc->setStyleSheet(lString8(cre_css), true);
-    doc->setViewMode(DVM_PAGES, 1);
-    doc->Resize(BUF_W, BUF_H);
-
-    if (!doc->LoadDocument(g_epub)) {
+    if (cn_reader_open(r, g_epub) != 0) {
         fprintf(stderr, "CRE ERROR: LoadDocument failed (%s)\n", g_epub);
-        delete doc;
+        cn_reader_free(r);
         return 1;
     }
 
     int rc = 0;
     if (m == MODE_SMOKE)
-        rc = run_smoke(doc);
+        rc = run_smoke(r);
     else if (m == MODE_DUMP)
-        rc = run_dump(doc, dump_dir) < 0 ? 1 : 0;
+        rc = run_dump(r, dump_dir) < 0 ? 1 : 0;
     else
-        rc = run_device(doc);
+        rc = run_device(r);
 
-    delete doc;
+    cn_reader_free(r);
     return rc;
 }

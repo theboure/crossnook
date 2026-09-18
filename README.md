@@ -26,6 +26,13 @@ Currently implemented:
   EPUB and lays out + renders readable RGB565 pages for the 600x800
   framebuffer, as a fully static non-PIE musl binary (`crossnook-cre-test`;
   host-validated under qemu, see `docs/milestone-crengine-rendering-spike.md`)
+- Library → Reader Integration: a reusable reader layer
+  (`src/reader/reader.{h,cpp}`) connects the Library UI to CREngine —
+  HOME → LIBRARY → select EPUB → reader (page 0) → NEXT/PREV turns
+  CREngine pages → BACK returns to the Library selection intact; FB2/TXT
+  and broken-EPUB activations fall back to the Selected Book screen
+  (`crossnook-reader-test`; host-validated under qemu, see
+  `docs/milestone-reader-integration.md`)
 
 ## Repository structure
 

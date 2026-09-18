@@ -1,0 +1,2 @@
+Plain text notes for the reader-fixtures set.
+Line two, proving the TXT format is recognized.

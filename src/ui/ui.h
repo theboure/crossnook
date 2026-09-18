@@ -14,8 +14,18 @@
  *   CN_UI_LIBRARY     — "CrossNook / Library" book list with highlight,
  *                       paging and touch selection/activation
  *   CN_UI_SELECTED_BOOK — diagnostic "Selected book" screen showing the
- *                       title/format/path (no parsing); BACK returns to
- *                       the same library position/selection
+ *                       title/format/path (no parsing); reached for FB2/TXT
+ *                       activation and as a deterministic fallback when an
+ *                       EPUB cannot be opened; BACK returns to the same
+ *                       library position/selection
+ *   CN_UI_READER       — real book reader (reader/reader.h owns CREngine).
+ *                       Entered by activating a selected EPUB row when a
+ *                       reader is attached; the page is CREngine-rendered
+ *                       full-screen (no diagnostic touch marker). NEXT/PREV
+ *                       turn pages (clamped at first/last), BACK returns to
+ *                       the same library position/selection, HOME returns
+ *                       HOME. EPUB open failures fall back to
+ *                       SELECTED_BOOK. Pages start at 0 on every open.
  *
  * Power held >= 2000 ms requests exit from any state.
  */
@@ -26,6 +36,7 @@
 #include "graphics/text.h"
 #include "library/library.h"
 #include "platform/nook/input.h"
+#include "reader/reader.h"
 
 #define CN_UI_POWER_LONG_MS 2000
 
@@ -40,7 +51,8 @@ typedef enum cn_ui_state {
     CN_UI_HOME = 0,
     CN_UI_READER_TEST,
     CN_UI_LIBRARY,
-    CN_UI_SELECTED_BOOK
+    CN_UI_SELECTED_BOOK,
+    CN_UI_READER
 } cn_ui_state;
 
 typedef struct cn_ui cn_ui;
@@ -52,6 +64,16 @@ void   cn_ui_free(cn_ui *ui);
  * frees it — the caller keeps ownership). Resets selection/viewport.
  * Returns the book count. Passing NULL detaches the library. */
 int cn_ui_set_library(cn_ui *ui, const cn_library *lib);
+
+/* Attach/detach the EPUB reader (cn_ui owns it). cfg selects the
+ * ReaderConfig (see reader/reader.h); pass NULL to detach. With no reader
+ * attached every book activation keeps the SELECTED_BOOK diagnostic.
+ * Returns 0 on success, -1 if the reader cannot be created. */
+int cn_ui_set_reader(cn_ui *ui, const cn_reader_config *cfg);
+
+/* Reader inspection (0 when no reader is attached or no document open). */
+int cn_ui_reader_pages(const cn_ui *ui);
+int cn_ui_reader_page(const cn_ui *ui);
 
 /* Number of rows that fit on the 600x800 library viewport. */
 int cn_ui_lib_rows(void);

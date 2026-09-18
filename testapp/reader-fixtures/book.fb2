@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+  <description>
+    <title-info>
+      <book-title>book</book-title>
+    </title-info>
+  </description>
+  <body>
+    <section>
+      <title><p>book</p></title>
+      <p>Some text for the FB2 format fixture.</p>
+    </section>
+  </body>
+</FictionBook>

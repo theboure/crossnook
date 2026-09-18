@@ -17,9 +17,14 @@
  *   - PAGE_PREV moves the selection up one row and scrolls the viewport
  *     so the selection stays visible.
  *   - Touch on a row selects it; touching the already-selected row again
- *     activates it (-> SELECTED_BOOK diagnostic screen).
- *   - BACK from SELECTED_BOOK returns to the library, preserving
- *     selection and viewport position.
+ *     activates it. EPUB rows open the real reader (CN_UI_READER, page 0)
+ *     when a reader is attached; a failing EPUB open and every FB2/TXT
+ *     activation show the SELECTED_BOOK diagnostic screen (deterministic
+ *     fallback, never a blank or crashed screen).
+ *   - CN_UI_READER: NEXT/PREV turn CREngine pages (clamped at first/last),
+ *     BACK returns to the library preserving selection/viewport, HOME
+ *     returns HOME, POWER >= 2000 ms exits. Touches are ignored (no
+ *     diagnostic marker in the real reader).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -66,6 +71,8 @@ struct cn_ui {
     const cn_library *lib;          /* borrowed, optional */
     int         sel;                /* selected book index */
     int         top;                /* first visible row index */
+
+    cn_reader  *reader;             /* optional EPUB reader (owned) */
 
     long long   power_press_ms;     /* -1 = power not held */
     int         exit_requested;
@@ -230,6 +237,9 @@ cn_ui *cn_ui_init(void)
 
 void cn_ui_free(cn_ui *ui)
 {
+    if (!ui)
+        return;
+    cn_reader_free(ui->reader);
     free(ui);
 }
 
@@ -241,6 +251,22 @@ int cn_ui_set_library(cn_ui *ui, const cn_library *lib)
         ui->top = 0;
     }
     return (lib && ui) ? lib->count : 0;
+}
+
+int cn_ui_set_reader(cn_ui *ui, const cn_reader_config *cfg)
+{
+    if (!ui)
+        return -1;
+    if (ui->reader) {
+        cn_reader_free(ui->reader);
+        ui->reader = NULL;
+    }
+    if (cfg) {
+        ui->reader = cn_reader_new(cfg);
+        if (!ui->reader)
+            return -1;
+    }
+    return 0;
 }
 
 int cn_ui_lib_rows(void)
@@ -255,7 +281,13 @@ int cn_ui_handle(cn_ui *ui, const cn_input_ev *ev)
 
     switch (ev->type) {
     case CN_INPUT_PAGE_NEXT:
-        if (ui->state == CN_UI_LIBRARY) {
+        if (ui->state == CN_UI_READER) {
+            if (ui->reader && cn_reader_is_open(ui->reader)) {
+                int p = cn_reader_page(ui->reader);
+                if (cn_reader_next(ui->reader) != p)
+                    redraw = 1;
+            }
+        } else if (ui->state == CN_UI_LIBRARY) {
             lib_down(ui);
             redraw = 1;
         } else if (ui->state == CN_UI_HOME) {
@@ -269,7 +301,13 @@ int cn_ui_handle(cn_ui *ui, const cn_input_ev *ev)
         break;
 
     case CN_INPUT_PAGE_PREV:
-        if (ui->state == CN_UI_READER_TEST) {
+        if (ui->state == CN_UI_READER) {
+            if (ui->reader && cn_reader_is_open(ui->reader)) {
+                int p = cn_reader_page(ui->reader);
+                if (cn_reader_prev(ui->reader) != p)
+                    redraw = 1;
+            }
+        } else if (ui->state == CN_UI_READER_TEST) {
             if (ui->page > 1)
                 ui->page--;
             redraw = 1;
@@ -283,7 +321,12 @@ int cn_ui_handle(cn_ui *ui, const cn_input_ev *ev)
         break;                       /* reserved */
 
     case CN_INPUT_BACK:
-        if (ui->state == CN_UI_SELECTED_BOOK) {
+        if (ui->state == CN_UI_READER) {
+            if (ui->reader)
+                cn_reader_close(ui->reader);
+            ui->state = CN_UI_LIBRARY;
+            redraw = 1;
+        } else if (ui->state == CN_UI_SELECTED_BOOK) {
             ui->state = CN_UI_LIBRARY;
             redraw = 1;
         } else if (ui->state != CN_UI_HOME) {
@@ -293,7 +336,12 @@ int cn_ui_handle(cn_ui *ui, const cn_input_ev *ev)
         break;
 
     case CN_INPUT_HOME:
-        if (ui->state != CN_UI_HOME) {
+        if (ui->state == CN_UI_READER) {
+            if (ui->reader)
+                cn_reader_close(ui->reader);
+            ui->state = CN_UI_HOME;
+            redraw = 1;
+        } else if (ui->state != CN_UI_HOME) {
             ui->state = CN_UI_HOME;
             redraw = 1;
         }
@@ -322,7 +370,8 @@ int cn_ui_handle(cn_ui *ui, const cn_input_ev *ev)
         break;
 
     case CN_INPUT_TOUCH_UP:
-        mark_at(ui, ev->x, ev->y, &redraw);
+        if (ui->state != CN_UI_READER)
+            mark_at(ui, ev->x, ev->y, &redraw);
         if (ui->state == CN_UI_HOME) {
             if (btn_hit(ev->x, ev->y, BTN_R_Y0, BTN_R_Y1)) {
                 ui->state = CN_UI_READER_TEST;
@@ -341,7 +390,15 @@ int cn_ui_handle(cn_ui *ui, const cn_input_ev *ev)
                 int idx = ui->top + r;
                 if (ui->lib && idx < ui->lib->count) {
                     if (idx == ui->sel) {
-                        ui->state = CN_UI_SELECTED_BOOK;
+                        const cn_book *b = &ui->lib->books[idx];
+                        if (ui->reader && b->format == CN_BOOK_EPUB) {
+                            if (cn_reader_open(ui->reader, b->path) == 0)
+                                ui->state = CN_UI_READER;
+                            else     /* deterministic fallback, never blank */
+                                ui->state = CN_UI_SELECTED_BOOK;
+                        } else {
+                            ui->state = CN_UI_SELECTED_BOOK;
+                        }
                     } else {
                         ui->sel = idx;
                     }
@@ -585,11 +642,23 @@ static void render_selected(cn_ui *ui, cn_canvas *c, cn_text *t)
     }
 }
 
+static void render_book(cn_ui *ui, cn_canvas *c, cn_text *t)
+{
+    (void)t;   /* book pages are CREngine-rendered, not text-module drawn */
+    if (ui->reader && cn_reader_is_open(ui->reader)) {
+        (void)cn_reader_render(ui->reader, cn_canvas_pixels(c),
+                               cn_canvas_width(c), cn_canvas_height(c));
+        return;      /* full-screen page; no diagnostic touch marker */
+    }
+    cn_canvas_clear(c, CN_COLOR_WHITE);
+}
+
 void cn_ui_render(cn_ui *ui, cn_canvas *c, cn_text *t)
 {
     switch (ui->state) {
     case CN_UI_LIBRARY:        render_library(ui, c, t);         break;
     case CN_UI_SELECTED_BOOK:  render_selected(ui, c, t);        break;
+    case CN_UI_READER:         render_book(ui, c, t);            break;
     case CN_UI_READER_TEST:    render_reader(ui, c, t);          break;
     case CN_UI_HOME:
     default:                   render_home(ui, c, t);            break;
@@ -640,6 +709,17 @@ const char *cn_ui_state_name(cn_ui_state s)
     case CN_UI_READER_TEST:   return "READER";
     case CN_UI_LIBRARY:       return "LIBRARY";
     case CN_UI_SELECTED_BOOK: return "SELECTED";
+    case CN_UI_READER:        return "READER";
     default:                  return "?";
     }
+}
+
+int cn_ui_reader_pages(const cn_ui *ui)
+{
+    return (ui && ui->reader) ? cn_reader_pages(ui->reader) : 0;
+}
+
+int cn_ui_reader_page(const cn_ui *ui)
+{
+    return (ui && ui->reader) ? cn_reader_page(ui->reader) : 0;
 }
