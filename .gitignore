@@ -1,6 +1,7 @@
 # Build artifacts
 build/
 testapp/crossnook-test
+testapp/crossnook-text
 
 # Temporary / working files
 work/
@@ -34,3 +35,7 @@ Thumbs.db
 
 # Toolchain
 toolchain/smoke/smoke
+
+# Text rendering validation artifact
+testapp/fb-text.png
+testapp/fb-text.bin

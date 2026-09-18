@@ -88,6 +88,18 @@ sysroot; the libc version was instead read from the `__libc_version[]`
 symbol at runtime (`toolchain/smoke/libcver.c`), which is the pinned
 identity recorded above.
 
+## FreeType in the image (since the text-rendering milestone)
+
+The pinned image additionally cross-compiles **FreeType 2.13.3**
+(`work/freetype/freetype-2.13.3.tar.xz`, sha256
+`0550350666d427c74daeb85d5ac7bb353acba5f76956395995311a9c6f063289`) into
+a static ARM library at `/opt/freetype` (headers under
+`/opt/freetype/include/freetype2`); all optional deps are disabled. The
+Dockerfile's build-time gate cross-links a tiny `FT_Init_FreeType`-using
+binary to prove the static link works. The image also includes a native
+`gcc` + `libc6-dev` because FreeType's `configure` builds a host-side
+tool (`apinames`) for cross builds. See `docs/crossnook-text.md`.
+
 ## Push and run on the Nook (Definition of Done)
 
 The binary is `toolchain/smoke/smoke` (static, ~18 KB).
