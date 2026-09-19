@@ -11,7 +11,7 @@
  * failing EPUB open land on the deterministic SELECTED_BOOK diagnostic.
  *
  * Modes:
- *   crossnook-reader-test <font.ttf> <books-dir>              device mode
+ *   crossnook-reader-test <font.ttf> <books-dir> <state-dir>  device mode
  *   crossnook-reader-test --smoke <font> <dir>                host checks
  *   crossnook-reader-test --dump <font> <dir> <outdir>        host frames
  *
@@ -29,6 +29,8 @@
 #include "library/library.h"
 #include "platform/nook/display.h"
 #include "platform/nook/input.h"
+#include "progress/book_identity.h"
+#include "progress/progress_store.h"
 #include "ui/ui.h"
 
 /* ---- host helpers -------------------------------------------------- */
@@ -617,7 +619,62 @@ static int run_dump(const char *font, const char *dir, const char *outdir)
 
 /* ---- device mode ----------------------------------------------------- */
 
-static int run_device(const char *font_path, const char *books_dir)
+static int selected_identity(cn_ui *ui, cn_book_identity *identity)
+{
+    const cn_book *book = cn_ui_selected_book(ui);
+    cn_book_identity_init(identity);
+    if (!book || book->format != CN_BOOK_EPUB)
+        return -1;
+    return cn_book_identity_from_path(identity, book->path);
+}
+
+static void save_reader_progress(cn_ui *ui, cn_progress_store *store)
+{
+    cn_book_identity identity;
+    cn_progress_record record;
+    cn_progress_result result;
+    const char *token;
+    if (!store || cn_ui_get_state(ui) != CN_UI_READER ||
+        selected_identity(ui, &identity) != 0)
+        return;
+    token = cn_book_identity_token(&identity);
+    cn_progress_record_init(&record);
+    if (cn_ui_reader_get_position(ui, &record.position) != 0) {
+        fprintf(stderr, "PROGRESS save book=%s result=capture-error\n", token);
+        cn_progress_record_clear(&record);
+        return;
+    }
+    result = cn_progress_store_save(store, &identity, &record);
+    fprintf(stderr, "PROGRESS save book=%s result=%s\n", token,
+            cn_progress_result_name(result));
+    cn_progress_record_clear(&record);
+}
+
+static void restore_reader_progress(cn_ui *ui, cn_progress_store *store)
+{
+    cn_book_identity identity;
+    cn_progress_record record;
+    cn_progress_result result;
+    const char *token;
+    if (!store || cn_ui_get_state(ui) != CN_UI_READER ||
+        selected_identity(ui, &identity) != 0)
+        return;
+    token = cn_book_identity_token(&identity);
+    cn_progress_record_init(&record);
+    result = cn_progress_store_load(store, &identity, &record);
+    fprintf(stderr, "PROGRESS load book=%s result=%s\n", token,
+            cn_progress_result_name(result));
+    if (result == CN_PROGRESS_OK) {
+        if (cn_ui_reader_goto_position(ui, &record.position) == 0)
+            fprintf(stderr, "PROGRESS restore OK\n");
+        else
+            fprintf(stderr, "PROGRESS restore rejected\n");
+    }
+    cn_progress_record_clear(&record);
+}
+
+static int run_device(const char *font_path, const char *books_dir,
+                      const char *state_directory)
 {
     cn_display *disp;
     cn_text *t = cn_text_load(font_path);
@@ -627,6 +684,8 @@ static int run_device(const char *font_path, const char *books_dir)
     cn_input *in;
     cn_reader_config cfg;
     cn_input_ev ev;
+    cn_progress_store *progress = NULL;
+    cn_progress_result progress_result;
     int rc;
 
     if (!t)
@@ -640,8 +699,14 @@ static int run_device(const char *font_path, const char *books_dir)
     if (cn_library_count(lib) == 0)
         fprintf(stderr, "reader-test: %s: no books found\n", books_dir);
 
+    progress_result = cn_progress_store_open(&progress, state_directory);
+    if (progress_result != CN_PROGRESS_OK)
+        fprintf(stderr, "PROGRESS open result=%s\n",
+                cn_progress_result_name(progress_result));
+
     disp = cn_display_open();
     if (!disp) {
+        cn_progress_store_close(progress);
         cn_library_free(lib);
         cn_text_free(t);
         return 1;
@@ -654,6 +719,8 @@ static int run_device(const char *font_path, const char *books_dir)
         cn_input_close(in);
         cn_canvas_free(c);
         cn_display_close(disp);
+        cn_ui_free(ui);
+        cn_progress_store_close(progress);
         cn_library_free(lib);
         cn_text_free(t);
         return 1;
@@ -665,6 +732,8 @@ static int run_device(const char *font_path, const char *books_dir)
         cn_input_close(in);
         cn_canvas_free(c);
         cn_display_close(disp);
+        cn_ui_free(ui);
+        cn_progress_store_close(progress);
         cn_library_free(lib);
         cn_text_free(t);
         return 1;
@@ -677,6 +746,8 @@ static int run_device(const char *font_path, const char *books_dir)
         cn_input_close(in);
         cn_canvas_free(c);
         cn_display_close(disp);
+        cn_ui_free(ui);
+        cn_progress_store_close(progress);
         cn_library_free(lib);
         cn_text_free(t);
         return 1;
@@ -686,6 +757,8 @@ static int run_device(const char *font_path, const char *books_dir)
            cn_input_devices(in), cn_library_count(lib));
 
     for (;;) {
+        cn_ui_state before;
+        int redraw;
         rc = cn_input_poll(in, &ev, -1);
         if (rc < 0)
             break;
@@ -695,7 +768,19 @@ static int run_device(const char *font_path, const char *books_dir)
         if (ev.type == CN_INPUT_TOUCH_UP)
             printf("UI touch=%d,%d\n", ev.x, ev.y);
 
-        if (cn_ui_handle(ui, &ev)) {
+        before = cn_ui_get_state(ui);
+        if (before == CN_UI_READER &&
+            (ev.type == CN_INPUT_BACK || ev.type == CN_INPUT_HOME))
+            save_reader_progress(ui, progress);
+
+        redraw = cn_ui_handle(ui, &ev);
+        if (before != CN_UI_READER &&
+            cn_ui_get_state(ui) == CN_UI_READER) {
+            restore_reader_progress(ui, progress);
+            redraw = 1;
+        }
+
+        if (redraw) {
             cn_ui_render(ui, c, t);
             if (cn_display_flush(disp, cn_canvas_pixels(c)) != CN_FB_BYTES)
                 break;
@@ -724,9 +809,13 @@ static int run_device(const char *font_path, const char *books_dir)
         }
     }
 
+    if (cn_ui_get_state(ui) == CN_UI_READER)
+        save_reader_progress(ui, progress);
     cn_input_close(in);
     cn_canvas_free(c);
     cn_display_close(disp);
+    cn_ui_free(ui);
+    cn_progress_store_close(progress);
     cn_library_free(lib);
     cn_text_free(t);
     return 0;
@@ -742,11 +831,11 @@ int main(int argc, char **argv)
     if (argc == 5 && strcmp(argv[1], "--dump") == 0)
         return run_dump(argv[2], argv[3], argv[4]);
 
-    if (argc == 3 && argv[1][0] != '-')
-        return run_device(argv[1], argv[2]);
+    if (argc == 4 && argv[1][0] != '-')
+        return run_device(argv[1], argv[2], argv[3]);
 
     fprintf(stderr,
-            "usage: crossnook-reader-test <font.ttf> <books-dir>\n"
+            "usage: crossnook-reader-test <font.ttf> <books-dir> <state-dir>\n"
             "       crossnook-reader-test --smoke <font> <dir>\n"
             "       crossnook-reader-test --dump <font> <dir> <outdir>\n");
     return 2;

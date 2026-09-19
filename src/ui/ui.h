@@ -75,6 +75,13 @@ int cn_ui_set_reader(cn_ui *ui, const cn_reader_config *cfg);
 int cn_ui_reader_pages(const cn_ui *ui);
 int cn_ui_reader_page(const cn_ui *ui);
 
+/* Forward logical-position operations to the owned Reader. Persistence and
+ * book identity remain application concerns; this layer never accesses the
+ * filesystem. */
+int cn_ui_reader_get_position(cn_ui *ui, cn_reader_position *position);
+int cn_ui_reader_goto_position(cn_ui *ui,
+                               const cn_reader_position *position);
+
 /* Number of rows that fit on the 600x800 library viewport. */
 int cn_ui_lib_rows(void);
 

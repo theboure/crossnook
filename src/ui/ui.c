@@ -723,3 +723,18 @@ int cn_ui_reader_page(const cn_ui *ui)
 {
     return (ui && ui->reader) ? cn_reader_page(ui->reader) : 0;
 }
+
+int cn_ui_reader_get_position(cn_ui *ui, cn_reader_position *position)
+{
+    if (!ui || !ui->reader)
+        return -1;
+    return cn_reader_get_position(ui->reader, position);
+}
+
+int cn_ui_reader_goto_position(cn_ui *ui,
+                               const cn_reader_position *position)
+{
+    if (!ui || !ui->reader)
+        return -1;
+    return cn_reader_goto_position(ui->reader, position);
+}

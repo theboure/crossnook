@@ -38,11 +38,16 @@ Currently implemented:
   reopen and pagination-changing relayouts without making page number the
   canonical position (`crossnook-position-test`; host- and hardware-validated,
   see `docs/milestone-reader-position.md`)
+- Local Reading Progress Persistence: a bounded versioned ProgressStore saves
+  canonical ReaderPosition records under an explicit state directory and
+  restores independent books across process restarts and layout changes
+  (`crossnook-progress-test`; host- and hardware-validated,
+  see `docs/milestone-local-progress.md`)
 
 ## Repository structure
 
 - `testapp/` — hardware test application and host-side integration tests
-- `src/` — reusable module tree (platform / graphics / ui / library),
+- `src/` — reusable module tree (platform / graphics / ui / library / progress),
   composed by `crossnook-ui-test`
 - `toolchain/` — reproducible ARM build environment
 - `diag/` — diagnostic utilities for the device

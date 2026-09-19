@@ -32,7 +32,6 @@ extern "C" {
 #define BUF_W CN_READER_W
 #define BUF_H CN_READER_H
 #define BUF_BYTES (BUF_W * BUF_H * 2)
-#define POSITION_MAX_BYTES 65536
 
 static bool g_font_ready = false;    /* fontMan singleton initialized  */
 static lString8 g_font_path;         /* last font registered by us     */
@@ -89,7 +88,7 @@ static int position_location_length(const char *location, size_t *length)
     size_t n;
     if (!location || location[0] != '/')
         return -1;
-    for (n = 0; n <= POSITION_MAX_BYTES; ++n) {
+    for (n = 0; n <= CN_READER_POSITION_MAX_BYTES; ++n) {
         if (location[n] == '\0') {
             if (n == 0)
                 return -1;

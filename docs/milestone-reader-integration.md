@@ -180,7 +180,8 @@ Confirmed on hardware:
 ## On-device validation procedure (recorded for repetition)
 
 1. Push `crossnook-reader-test` + `reader-fixtures/` + `test-font.ttf`
-   to `/tmp`; run device mode with the font + books-dir arguments.
+   to `/tmp`; run current device mode with font, books-dir, and an explicit
+   writable state-dir argument (for example `/tmp/crossnook-state`).
 2. HOME → LIBRARY → open `valid.epub` → confirm page 0 renders; PAGE_NEXT/
    PREV turns pages; BACK returns to the Library preserving selection/
    scroll; verify `broken.epub` shows SELECTED_BOOK (never blank);

@@ -38,6 +38,7 @@
 
 #define CN_READER_W 600
 #define CN_READER_H 800
+#define CN_READER_POSITION_MAX_BYTES 65536
 
 typedef struct cn_reader cn_reader;
 

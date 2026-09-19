@@ -189,13 +189,13 @@ The hardware pass above was established with this procedure.
    integration binary:
 
    ```
-   adb shell mkdir -p /tmp/reader-fixtures
+   adb shell mkdir -p /tmp/reader-fixtures /tmp/crossnook-state
    adb push testapp/crossnook-reader-test /tmp/
    adb push testapp/test-font.ttf /tmp/
    adb push testapp/reader-fixtures/. /tmp/reader-fixtures/
    adb shell chmod 755 /tmp/crossnook-reader-test
    adb shell /tmp/crossnook-reader-test \
-     /tmp/test-font.ttf /tmp/reader-fixtures
+     /tmp/test-font.ttf /tmp/reader-fixtures /tmp/crossnook-state
    ```
 
 6. On screen, confirm HOME -> Library, valid EPUB page rendering, NEXT/PREV,
