@@ -48,6 +48,12 @@ Currently implemented:
   without changing Local Progress `path-v1` records (`crossnook-bookid-test`;
   host- and hardware-validated, see
   `docs/milestone-koreader-identity.md`)
+- Wi-Fi Detach + Plain-HTTP: a bounded static ARM HTTP/1.0 client
+  (`crossnook-net-test`) and a read-only `diag/network-info.sh` probe back a
+  manual association path for the TI wl1251 stack on the diagnostic image;
+  the full chain was proven on hardware against a PC HTTP server
+  (`NESTEST GET 200 ... OK`, host- and hardware-validated, see
+  `docs/milestone-wifi-networking.md`)
 
 ## Repository structure
 

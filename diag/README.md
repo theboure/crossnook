@@ -124,3 +124,35 @@ as `<control> = <device> / <type> <code>`.
   so a later mapping layer can be specified from measured facts.
 - No touch rotation/calibration: framebuffer and touch coordinates are
   already 1:1 (`screen_x = ABS_X`, `screen_y = ABS_Y`).
+
+## 4. WiFi / networking probe (companion tool)
+
+`network-info.sh` is a second read-only probe for the **Wi-Fi bring-up**
+milestone (`docs/milestone-wifi-networking.md`). It prints measured facts
+about the same diagnostic image: kernel/networking version line, whether
+`tiwlan_drv.ko` is present and loaded, the wl1251 firmware/calibration
+blobs, the TI-patched `wpa_supplicant` banner, interface/link/route/DNS
+state, and which networking userspace tools exist. Nothing is written to
+the device (it only reads `/proc`, `/sys`, `/etc`, and runs version
+probes).
+
+```bash
+adb push diag/network-info.sh /data/network-info.sh
+adb shell chmod 755 /data/network-info.sh
+
+adb shell /data/network-info.sh            # everything
+adb shell /data/network-info.sh wifi       # module + supplicant + loader
+adb shell /data/network-info.sh net        # link / route / arp / resolv.conf
+adb shell /data/network-info.sh tools      # available binaries + versions
+```
+
+If `/data` is read-only, use `/tmp/network-info.sh` instead. On the
+diagnostic image Wi-Fi never comes up automatically (the stock
+`wpa_supplicant` service is not started by its init), so this probe just
+gathers the environment; association itself is a separate manual step in
+the milestone doc. `tiwlan_loader` is never executed by the probe — running
+it would set `wlan.driver.status` and is a side effect a read-only
+diagnostic must not have. The probe only locates the binary and inspects
+its metadata/strings.
+
+**Status: used during the real-device Wi-Fi validation pass.**
