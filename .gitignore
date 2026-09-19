@@ -8,6 +8,7 @@ testapp/crossnook-cre-test
 testapp/crossnook-reader-test
 testapp/crossnook-position-test
 testapp/crossnook-progress-test
+testapp/crossnook-bookid-test
 
 # Temporary / working files
 work/

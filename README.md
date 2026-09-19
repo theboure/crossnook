@@ -43,11 +43,17 @@ Currently implemented:
   restores independent books across process restarts and layout changes
   (`crossnook-progress-test`; host- and hardware-validated,
   see `docs/milestone-local-progress.md`)
+- KOReader-Compatible Document Identity: an isolated BookIdentity module
+  reproduces KOReader/KOSync Binary partial-MD5 and Filename document keys
+  without changing Local Progress `path-v1` records (`crossnook-bookid-test`;
+  host- and hardware-validated, see
+  `docs/milestone-koreader-identity.md`)
 
 ## Repository structure
 
 - `testapp/` — hardware test application and host-side integration tests
-- `src/` — reusable module tree (platform / graphics / ui / library / progress),
+- `src/` — reusable module tree (platform / graphics / ui / library / reader /
+  progress / book),
   composed by `crossnook-ui-test`
 - `toolchain/` — reproducible ARM build environment
 - `diag/` — diagnostic utilities for the device
