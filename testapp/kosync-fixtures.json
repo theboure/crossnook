@@ -1,0 +1,35 @@
+{
+  "upstream": {
+    "koreader": "8da811b1bd4f33c2ce239885fe96e24771aba308",
+    "koreader_base": "9a8729713ab73f539b607af23ede6aa89d04cfed"
+  },
+  "credentials": {
+    "username": "test-user",
+    "userkey": "dfb450efddbb5387197c84460623675b"
+  },
+  "documents": {
+    "test.epub": "e1a1e9016cfc9bca8c694187943e9c4f",
+    "valid2.epub": "e1a1e9016cfc9bca8c694187943e9c4f",
+    "foreign.epub": "519220cea448409961e6b3081a36eca3"
+  },
+  "put_request": {
+    "document": "e1a1e9016cfc9bca8c694187943e9c4f",
+    "progress": "/body/DocFragment[1]/body/p[1]/text().0",
+    "percentage": 0.321,
+    "device": "crossnook-test-device",
+    "device_id": "crossnook-test-device-id"
+  },
+  "put_response": {
+    "document": "e1a1e9016cfc9bca8c694187943e9c4f",
+    "timestamp": 1700000000
+  },
+  "get_response": {
+    "document": "e1a1e9016cfc9bca8c694187943e9c4f",
+    "progress": "/body/DocFragment[1]/body/p[1]/text().0",
+    "percentage": 0.321,
+    "device": "crossnook-test-device",
+    "device_id": "crossnook-test-device-id",
+    "timestamp": 1700000000
+  },
+  "missing_response": {}
+}

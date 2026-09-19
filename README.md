@@ -54,12 +54,17 @@ Currently implemented:
   the full chain was proven on hardware against a PC HTTP server
   (`NESTEST GET 200 ... OK`, host- and hardware-validated, see
   `docs/milestone-wifi-networking.md`)
+- KOSync Protocol Core + Local Mock Server: a bounded sync-domain client adds
+  the pinned KOReader progress `GET`/`PUT` schema, exact auth headers, logical
+  XPointer transport, deterministic timestamp/conflict classification, and a
+  Python standard-library LAN mock (`crossnook-kosync-test`; host- and
+  hardware-validated, see `docs/milestone-kosync-protocol.md`)
 
 ## Repository structure
 
 - `testapp/` — hardware test application and host-side integration tests
 - `src/` — reusable module tree (platform / graphics / ui / library / reader /
-  progress / book),
+  progress / book / net / sync),
   composed by `crossnook-ui-test`
 - `toolchain/` — reproducible ARM build environment
 - `diag/` — diagnostic utilities for the device

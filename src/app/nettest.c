@@ -68,6 +68,8 @@ static int run_api_smoke(void)
           "Validate accepts hostnames", &failures);
     check(cn_netsimple_validate("bad host", "80", "/") == 0,
           "Validate rejects whitespace in a host", &failures);
+    check(cn_netsimple_validate("bad\r\nhost", "80", "/") == 0,
+          "Validate rejects controls in a host", &failures);
     check(cn_netsimple_validate("evil/host", "80", "/") == 0,
           "Validate rejects a slash in a host", &failures);
     check(cn_netsimple_validate("", "80", "/") == 0,
@@ -78,6 +80,9 @@ static int run_api_smoke(void)
           "Validate requires an absolute path", &failures);
     check(cn_netsimple_validate("192.168.1.1", "80", "@") == 0,
           "Validate rejects a non-slash path", &failures);
+    check(cn_netsimple_validate("192.168.1.1", "80",
+                                "/ok\r\nInjected: yes") == 0,
+          "Validate rejects request-target header injection", &failures);
 
     check(cn_netsimple_build_request("192.168.1.1", "81", "/d/",
                                      request, sizeof request,

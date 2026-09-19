@@ -1,6 +1,8 @@
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <netdb.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <poll.h>
 #include <stddef.h>
@@ -15,11 +17,21 @@
 
 #include "net/netsimple.h"
 
-static long now_ms(void)
+static int64_t now_ms(void)
 {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
+    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+static int poll_interval_ms(int64_t deadline)
+{
+    int64_t remaining = deadline - now_ms();
+    if (remaining < 0)
+        return -1;
+    if (remaining > INT_MAX)
+        return INT_MAX;
+    return (int)remaining;
 }
 
 int cn_netsimple_parse_ipv4(const char *text, unsigned char out[4])
@@ -94,8 +106,8 @@ static int host_text_ok(const char *host)
     for (n = 0; host[n] != '\0'; ++n) {
         if (n >= CN_NETSIMPLE_HOST_MAX)
             return 0;
-        if (host[n] == ' ' || host[n] == '\t' || host[n] == '/' ||
-            host[n] == '\\')
+        if ((unsigned char)host[n] <= 0x20 || host[n] == 0x7f ||
+            host[n] == '/' || host[n] == '\\')
             return 0;
     }
     return 1;
@@ -113,8 +125,15 @@ int cn_netsimple_validate(const char *host, const char *port, const char *path)
         return 0;
     if (path[0] != '/')
         return 0;
-    if (strlen(path) > CN_NETSIMPLE_PATH_MAX)
-        return 0;
+    {
+        size_t i;
+        for (i = 0; path[i] != '\0'; ++i) {
+            unsigned char c = (unsigned char)path[i];
+            if (i >= CN_NETSIMPLE_PATH_MAX || c <= 0x20 || c == 0x7f ||
+                c == '\\')
+                return 0;
+        }
+    }
     (void)parsed_port;
     return 1;
 }
@@ -139,6 +158,119 @@ cn_netsimple_result cn_netsimple_build_request(const char *host,
     if ((size_t)written >= request_cap)
         return CN_NETSIMPLE_INVALID;
     *request_len = (size_t)written;
+    return CN_NETSIMPLE_OK;
+}
+
+static int header_name_ok(const char *name)
+{
+    size_t i;
+    if (!name || name[0] == '\0')
+        return 0;
+    for (i = 0; name[i] != '\0'; ++i) {
+        char c = name[i];
+        if (i >= 63 || !((c >= 'a' && c <= 'z') ||
+                         (c >= 'A' && c <= 'Z') ||
+                         (c >= '0' && c <= '9') || c == '-'))
+            return 0;
+    }
+    return 1;
+}
+
+static int header_value_ok(const char *value)
+{
+    size_t i;
+    if (!value)
+        return 0;
+    for (i = 0; value[i] != '\0'; ++i) {
+        unsigned char c = (unsigned char)value[i];
+        if (i >= 2048 || c < 0x20 || c == 0x7f)
+            return 0;
+    }
+    return 1;
+}
+
+static cn_netsimple_result append_text(char *request, size_t request_cap,
+                                       size_t *used, const char *text)
+{
+    size_t len = strlen(text);
+    if (*used >= request_cap || len >= request_cap - *used)
+        return CN_NETSIMPLE_INVALID;
+    memcpy(request + *used, text, len);
+    *used += len;
+    request[*used] = '\0';
+    return CN_NETSIMPLE_OK;
+}
+
+cn_netsimple_result cn_netsimple_build_exchange_request(
+    const cn_netsimple_request *spec,
+    char *request, size_t request_cap, size_t *request_len)
+{
+    const char *method;
+    size_t used = 0;
+    size_t i;
+    char length_line[64];
+    int written;
+
+    if (!spec || !request || !request_len || request_cap == 0 ||
+        !cn_netsimple_validate(spec->host, spec->port, spec->path) ||
+        spec->header_count > CN_NETSIMPLE_HEADER_MAX ||
+        (spec->header_count != 0 && !spec->headers) ||
+        (spec->body_len != 0 && !spec->body))
+        return CN_NETSIMPLE_INVALID;
+    if (spec->method == CN_NETSIMPLE_METHOD_GET) {
+        if (spec->body || spec->body_len || spec->content_type)
+            return CN_NETSIMPLE_INVALID;
+        method = "GET";
+    } else if (spec->method == CN_NETSIMPLE_METHOD_PUT) {
+        if (!spec->body || !spec->content_type ||
+            !header_value_ok(spec->content_type))
+            return CN_NETSIMPLE_INVALID;
+        method = "PUT";
+    } else {
+        return CN_NETSIMPLE_INVALID;
+    }
+    for (i = 0; i < spec->header_count; ++i) {
+        if (!header_name_ok(spec->headers[i].name) ||
+            !header_value_ok(spec->headers[i].value))
+            return CN_NETSIMPLE_INVALID;
+    }
+
+    request[0] = '\0';
+    if (append_text(request, request_cap, &used, method) != CN_NETSIMPLE_OK ||
+        append_text(request, request_cap, &used, " ") != CN_NETSIMPLE_OK ||
+        append_text(request, request_cap, &used, spec->path) != CN_NETSIMPLE_OK ||
+        append_text(request, request_cap, &used,
+                    " HTTP/1.0\r\nHost: ") != CN_NETSIMPLE_OK ||
+        append_text(request, request_cap, &used, spec->host) != CN_NETSIMPLE_OK ||
+        append_text(request, request_cap, &used, "\r\n") != CN_NETSIMPLE_OK)
+        return CN_NETSIMPLE_INVALID;
+    for (i = 0; i < spec->header_count; ++i) {
+        if (append_text(request, request_cap, &used,
+                        spec->headers[i].name) != CN_NETSIMPLE_OK ||
+            append_text(request, request_cap, &used, ": ") != CN_NETSIMPLE_OK ||
+            append_text(request, request_cap, &used,
+                        spec->headers[i].value) != CN_NETSIMPLE_OK ||
+            append_text(request, request_cap, &used, "\r\n") != CN_NETSIMPLE_OK)
+            return CN_NETSIMPLE_INVALID;
+    }
+    if (spec->method == CN_NETSIMPLE_METHOD_PUT) {
+        if (append_text(request, request_cap, &used,
+                        "Content-Type: ") != CN_NETSIMPLE_OK ||
+            append_text(request, request_cap, &used,
+                        spec->content_type) != CN_NETSIMPLE_OK ||
+            append_text(request, request_cap, &used, "\r\n") != CN_NETSIMPLE_OK)
+            return CN_NETSIMPLE_INVALID;
+        written = snprintf(length_line, sizeof length_line,
+                           "Content-Length: %llu\r\n",
+                           (unsigned long long)spec->body_len);
+        if (written < 0 || (size_t)written >= sizeof length_line ||
+            append_text(request, request_cap, &used,
+                        length_line) != CN_NETSIMPLE_OK)
+            return CN_NETSIMPLE_INVALID;
+    }
+    if (append_text(request, request_cap, &used, "\r\n") != CN_NETSIMPLE_OK)
+        return CN_NETSIMPLE_INVALID;
+    *request_len = used;
     return CN_NETSIMPLE_OK;
 }
 
@@ -263,8 +395,8 @@ static cn_netsimple_result connect_with_timeout(int fd,
     int value;
     socklen_t value_len = sizeof value;
     struct pollfd descriptor;
-    long deadline;
-    long remaining;
+    int64_t deadline;
+    int poll_ms;
     int polled;
 
     flags = fcntl(fd, F_GETFL, 0);
@@ -281,15 +413,15 @@ static cn_netsimple_result connect_with_timeout(int fd,
         return cn_netsimple_connect_error(errno);
     }
 
-    deadline = now_ms() + (long)timeout_ms;
+    deadline = now_ms() + (int64_t)timeout_ms;
     descriptor.fd = fd;
     descriptor.events = POLLOUT;
     descriptor.revents = 0;
     while (1) {
-        remaining = deadline - now_ms();
-        if (remaining < 0)
+        poll_ms = poll_interval_ms(deadline);
+        if (poll_ms < 0)
             return CN_NETSIMPLE_CONNECT_TIMEOUT;
-        polled = poll(&descriptor, 1, (int)remaining);
+        polled = poll(&descriptor, 1, poll_ms);
         if (polled == 0)
             return CN_NETSIMPLE_CONNECT_TIMEOUT;
         if (polled < 0) {
@@ -311,11 +443,53 @@ static cn_netsimple_result connect_with_timeout(int fd,
     return CN_NETSIMPLE_OK;
 }
 
-cn_netsimple_result cn_netsimple_get(const char *host, const char *port,
-                                     const char *path,
-                                     char *buffer, size_t buffer_cap,
-                                     unsigned connect_ms, unsigned recv_ms,
-                                     cn_netsimple_response *out)
+static cn_netsimple_result send_buffer(int fd, const char *data, size_t length,
+                                       int64_t deadline, int *early_response)
+{
+    size_t sent_total = 0;
+    while (sent_total < length) {
+        struct pollfd descriptor;
+        int poll_ms = poll_interval_ms(deadline);
+        int polled;
+        ssize_t sent;
+        if (poll_ms < 0)
+            return CN_NETSIMPLE_SEND_TIMEOUT;
+        descriptor.fd = fd;
+        descriptor.events = POLLOUT | POLLIN;
+        descriptor.revents = 0;
+        polled = poll(&descriptor, 1, poll_ms);
+        if (polled == 0)
+            return CN_NETSIMPLE_SEND_TIMEOUT;
+        if (polled < 0) {
+            if (errno == EINTR)
+                continue;
+            return CN_NETSIMPLE_SEND_ERROR;
+        }
+        if (descriptor.revents & POLLIN) {
+            *early_response = 1;
+            return CN_NETSIMPLE_OK;
+        }
+        if (descriptor.revents & (POLLERR | POLLHUP | POLLNVAL))
+            return CN_NETSIMPLE_SEND_ERROR;
+        sent = send(fd, data + sent_total, length - sent_total,
+                    MSG_NOSIGNAL);
+        if (sent < 0) {
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+                continue;
+            return CN_NETSIMPLE_SEND_ERROR;
+        }
+        if (sent == 0)
+            return CN_NETSIMPLE_SEND_ERROR;
+        sent_total += (size_t)sent;
+    }
+    return CN_NETSIMPLE_OK;
+}
+
+cn_netsimple_result cn_netsimple_exchange(
+    const cn_netsimple_request *spec,
+    char *buffer, size_t buffer_cap,
+    unsigned connect_ms, unsigned recv_ms,
+    cn_netsimple_response *out)
 {
     unsigned char address_bytes[4];
     struct sockaddr_in address6;
@@ -329,27 +503,27 @@ cn_netsimple_result cn_netsimple_get(const char *host, const char *port,
     int connected = 0;
     int truncated = 0;
     cn_netsimple_result result = CN_NETSIMPLE_INVALID;
-    long recv_deadline;
-    long remaining;
+    int64_t recv_deadline;
+    int send_flags;
+    int64_t send_deadline;
+    int early_response = 0;
 
-    if (!out)
+    if (!spec || !out)
         return CN_NETSIMPLE_INVALID;
     memset(out, 0, sizeof *out);
-    if (!cn_netsimple_validate(host, port, path))
-        return CN_NETSIMPLE_INVALID;
     if (!buffer || buffer_cap == 0)
         return CN_NETSIMPLE_INVALID;
 
-    result = cn_netsimple_build_request(host, port, path,
-                                        request, sizeof request,
-                                        &request_len);
+    result = cn_netsimple_build_exchange_request(spec, request,
+                                                  sizeof request,
+                                                  &request_len);
     if (result != CN_NETSIMPLE_OK)
         return result;
 
     memset(&address6, 0, sizeof address6);
     address6.sin_family = AF_INET;
-    address6.sin_port = htons((unsigned short)atoi(port));
-    if (cn_netsimple_parse_ipv4(host, address_bytes)) {
+    address6.sin_port = htons((unsigned short)atoi(spec->port));
+    if (cn_netsimple_parse_ipv4(spec->host, address_bytes)) {
         memcpy(&address6.sin_addr.s_addr, address_bytes, 4);
         fd = socket(AF_INET, SOCK_STREAM, 0);
         if (fd < 0)
@@ -370,7 +544,8 @@ cn_netsimple_result cn_netsimple_get(const char *host, const char *port,
         hints.ai_socktype = SOCK_STREAM;
         hints.ai_flags = AI_NUMERICSERV;
         resolved = NULL;
-        if (getaddrinfo(host, port, &hints, &resolved) != 0 || !resolved)
+        if (getaddrinfo(spec->host, spec->port, &hints, &resolved) != 0 ||
+            !resolved)
             return CN_NETSIMPLE_RESOLVE_ERROR;
         for (entry = resolved; entry; entry = entry->ai_next) {
             if (entry->ai_family != AF_INET)
@@ -395,20 +570,25 @@ cn_netsimple_result cn_netsimple_get(const char *host, const char *port,
     if (!connected)
         return result;
 
-    while (total < request_len) {
-        ssize_t sent = send(fd, request + total, request_len - total,
-                            MSG_NOSIGNAL);
-        if (sent < 0) {
-            if (errno == EINTR)
-                continue;
-            result = CN_NETSIMPLE_SEND_ERROR;
-            goto done;
-        }
-        total += (size_t)sent;
+    send_flags = fcntl(fd, F_GETFL, 0);
+    if (send_flags < 0 ||
+        fcntl(fd, F_SETFL, send_flags | O_NONBLOCK) < 0) {
+        result = CN_NETSIMPLE_SEND_ERROR;
+        goto done;
     }
+    send_deadline = now_ms() + (int64_t)recv_ms;
+    result = send_buffer(fd, request, request_len, send_deadline,
+                         &early_response);
+    if (result == CN_NETSIMPLE_OK && !early_response && spec->body_len != 0)
+        result = send_buffer(fd, (const char *)spec->body, spec->body_len,
+                             send_deadline, &early_response);
+    if (fcntl(fd, F_SETFL, send_flags) < 0 && result == CN_NETSIMPLE_OK)
+        result = CN_NETSIMPLE_SEND_ERROR;
+    if (result != CN_NETSIMPLE_OK)
+        goto done;
 
     total = 0;
-    recv_deadline = now_ms() + (long)recv_ms;
+    recv_deadline = now_ms() + (int64_t)recv_ms;
     while (1) {
         struct pollfd descriptor;
         int polled;
@@ -417,15 +597,15 @@ cn_netsimple_result cn_netsimple_get(const char *host, const char *port,
             truncated = 1;
             break;
         }
-        remaining = recv_deadline - now_ms();
-        if (remaining < 0) {
+        int poll_ms = poll_interval_ms(recv_deadline);
+        if (poll_ms < 0) {
             result = CN_NETSIMPLE_RECV_TIMEOUT;
             goto done;
         }
         descriptor.fd = fd;
         descriptor.events = POLLIN;
         descriptor.revents = 0;
-        polled = poll(&descriptor, 1, (int)remaining);
+        polled = poll(&descriptor, 1, poll_ms);
         if (polled == 0) {
             result = CN_NETSIMPLE_RECV_TIMEOUT;
             goto done;
@@ -453,6 +633,8 @@ cn_netsimple_result cn_netsimple_get(const char *host, const char *port,
                     }
                     total += (size_t)got;
                 }
+                if (total >= buffer_cap)
+                    truncated = 1;
             } else {
                 result = CN_NETSIMPLE_RECV_ERROR;
                 goto done;
@@ -498,13 +680,29 @@ done:
     return result;
 }
 
+cn_netsimple_result cn_netsimple_get(const char *host, const char *port,
+                                     const char *path,
+                                     char *buffer, size_t buffer_cap,
+                                     unsigned connect_ms, unsigned recv_ms,
+                                     cn_netsimple_response *out)
+{
+    cn_netsimple_request request;
+    memset(&request, 0, sizeof request);
+    request.method = CN_NETSIMPLE_METHOD_GET;
+    request.host = host;
+    request.port = port;
+    request.path = path;
+    return cn_netsimple_exchange(&request, buffer, buffer_cap,
+                                 connect_ms, recv_ms, out);
+}
+
 const char *cn_netsimple_result_name(cn_netsimple_result result)
 {
     static const char *const names[] = {
         "ok", "invalid", "resolve-error", "connect-refused",
         "network-unreachable", "host-unreachable", "connect-timeout",
         "connect-error", "send-error", "recv-error", "recv-timeout",
-        "truncated", "bad-response"
+        "truncated", "bad-response", "send-timeout"
     };
     if ((size_t)result < CN_NETSIMPLE_LENGTH)
         return names[result];

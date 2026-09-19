@@ -10,6 +10,7 @@ testapp/crossnook-position-test
 testapp/crossnook-progress-test
 testapp/crossnook-bookid-test
 testapp/crossnook-net-test
+testapp/crossnook-kosync-test
 
 # Temporary / working files
 work/
