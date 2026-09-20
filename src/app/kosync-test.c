@@ -3,8 +3,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "sync/kosync.h"
+#include "net/tlssimple.h"
 
 #define TEST_DOCUMENT "e1a1e9016cfc9bca8c694187943e9c4f"
 #define FOREIGN_DOCUMENT "519220cea448409961e6b3081a36eca3"
@@ -18,6 +20,13 @@
 #define FAULT_PROTOCOL "00000000000000000000000000000002"
 #define FAULT_OVERSIZED "00000000000000000000000000000003"
 #define FAULT_SERVER "00000000000000000000000000000004"
+
+static time_t tls_fixed_now;
+
+static time_t tls_fixed_time(void)
+{
+    return tls_fixed_now;
+}
 
 static void check(int condition, const char *name, int *failures)
 {
@@ -76,8 +85,9 @@ static int run_api_smoke(void)
               strcmp(client.base_path, "/base") == 0,
           "plain-HTTP base URL is parsed and normalized", &failures);
     check(cn_kosync_client_init(&client, "https://example.com", TEST_USER,
-                                TEST_KEY) == CN_KOSYNC_INVALID,
-          "HTTPS is explicitly rejected in this milestone", &failures);
+                                 TEST_KEY) == CN_KOSYNC_OK &&
+              client.use_tls && strcmp(client.port, "443") == 0,
+          "HTTPS base URL selects verified TLS and port 443", &failures);
     check(cn_kosync_client_init(&client, "http://example.com/bad\r\nheader",
                                 TEST_USER, TEST_KEY) == CN_KOSYNC_INVALID,
           "base URL rejects request-target injection", &failures);
@@ -166,6 +176,7 @@ static int run_api_smoke(void)
     check(cn_netsimple_build_exchange_request(&request, http, sizeof http,
                                                &http_len) == CN_NETSIMPLE_OK &&
               strstr(http, "PUT /syncs/progress HTTP/1.0\r\n") == http &&
+              strstr(http, "Host: 127.0.0.1:8000\r\n") != NULL &&
               strstr(http, "x-auth-user: test-user\r\n") != NULL &&
               strstr(http, "Content-Length: 2\r\n\r\n") != NULL,
           "bounded HTTP builder emits PUT, auth, type and length", &failures);
@@ -305,35 +316,71 @@ static int get_fixture(cn_kosync_client *client, const char *document,
     return matches;
 }
 
-static int run_roundtrip(int argc, char **argv)
+static int roundtrip_client(cn_kosync_client *client,
+                            const char *document, const char *other)
 {
-    cn_kosync_client client;
     long long first = 0;
     long long second = 0;
     long long foreign = 0;
     int failures = 0;
-    if (argc != 7)
-        return 2;
-    if (!init_client(&client, argv[2], argv[3], argv[4]))
-        return 1;
-    check(put_fixture(&client, argv[5], POSITION_ONE, 3210, &first),
+    check(put_fixture(client, document, POSITION_ONE, 3210, &first),
           "first progress upload", &failures);
-    check(get_fixture(&client, argv[5], POSITION_ONE, 3210, first),
+    check(get_fixture(client, document, POSITION_ONE, 3210, first),
           "first progress retrieval", &failures);
-    check(put_fixture(&client, argv[5], POSITION_TWO, 6543, &second) &&
+    check(put_fixture(client, document, POSITION_TWO, 6543, &second) &&
               second >= first,
           "same-document update", &failures);
-    check(get_fixture(&client, argv[5], POSITION_TWO, 6543, second),
+    check(get_fixture(client, document, POSITION_TWO, 6543, second),
           "updated progress retrieval", &failures);
-    check(put_fixture(&client, argv[6], POSITION_ONE, 1111, &foreign),
+    check(put_fixture(client, other, POSITION_ONE, 1111, &foreign),
           "distinct-document upload", &failures);
-    check(get_fixture(&client, argv[6], POSITION_ONE, 1111, foreign) &&
-              get_fixture(&client, argv[5], POSITION_TWO, 6543, second),
+    check(get_fixture(client, other, POSITION_ONE, 1111, foreign) &&
+              get_fixture(client, document, POSITION_TWO, 6543, second),
           "distinct documents remain independent", &failures);
     printf("KOSYNC ROUNDTRIP failures=%d first=%lld update=%lld other=%lld -> %s\n",
            failures, first, second, foreign,
            failures == 0 ? "OK" : "FAIL");
     return failures == 0 ? 0 : 1;
+}
+
+static int run_roundtrip(int argc, char **argv)
+{
+    cn_kosync_client client;
+
+    if (argc != 7)
+        return 2;
+    if (!init_client(&client, argv[2], argv[3], argv[4]))
+        return 1;
+    return roundtrip_client(&client, argv[5], argv[6]);
+}
+
+static int run_roundtrip_https(int argc, char **argv)
+{
+    cn_kosync_client client;
+    cn_tls_config tls;
+
+    if (argc != 9 && argc != 10)
+        return 2;
+    if (!init_client(&client, argv[2], argv[5], argv[6]))
+        return 1;
+    memset(&tls, 0, sizeof tls);
+    tls.ca_path = argv[4];
+    if (argc == 10) {
+        char *end;
+        long long epoch;
+
+        errno = 0;
+        epoch = strtoll(argv[9], &end, 10);
+        if (errno || !argv[9][0] || *end || epoch <= 0)
+            return 2;
+        tls_fixed_now = (time_t)epoch;
+        tls.get_time = tls_fixed_time;
+    }
+    if (cn_kosync_client_set_tls(&client, &tls, argv[3]) != CN_KOSYNC_OK) {
+        fprintf(stderr, "KOSYNC TLS CONFIG FAIL\n");
+        return 1;
+    }
+    return roundtrip_client(&client, argv[7], argv[8]);
 }
 
 static int run_mock_smoke(const char *url)
@@ -414,6 +461,8 @@ static void usage(void)
         "       crossnook-kosync-test --put <url> <user> <key> <doc> <position> <progress-10000> <device> <device-id>\n"
         "       crossnook-kosync-test --get <url> <user> <key> <doc>\n"
         "       crossnook-kosync-test --roundtrip <url> <user> <key> <doc1> <doc2>\n");
+    fprintf(stderr,
+        "       crossnook-kosync-test --roundtrip-https <url> <connect-host> <ca> <user> <key> <doc1> <doc2> [epoch]\n");
 }
 
 int main(int argc, char **argv)
@@ -430,6 +479,8 @@ int main(int argc, char **argv)
         return run_get(argc, argv);
     if (argc > 1 && strcmp(argv[1], "--roundtrip") == 0)
         return run_roundtrip(argc, argv);
+    if (argc > 1 && strcmp(argv[1], "--roundtrip-https") == 0)
+        return run_roundtrip_https(argc, argv);
     usage();
     return 2;
 }

@@ -1,0 +1,42 @@
+# BearSSL 0.6 (TLS 1.2 client/server, X.509, ECDSA/RSA) for the
+# TLS/HTTPS transport milestone.
+#
+# License: MIT. The required notice is retained in
+# third_party/bearssl-LICENSE.txt.
+#
+# Why BearSSL:
+#   - Implements TLS 1.0 through 1.2. CrossNook explicitly configures a
+#     TLS-1.2-only version range and ECDHE+AEAD cipher suites.
+#   - External entropy: no dependency on OS randomness / getrandom()
+#     (Linux 2.6.29 on the Nook has neither); we seed from /dev/urandom.
+#   - Caller-allocated contexts and I/O buffers: bounded memory with no
+#     malloc inside the library (fits the 256MB static-binary constraint).
+#   - X.509 minimal engine: chain validation to trust anchors with an
+#     injectable validation time (br_x509_minimal_set_time), DNS name
+#     matching (SAN dNSName, CN fallback, single leading wildcard) and
+#     fine-grained error codes (BR_ERR_X509_*).
+#   - Small footprint (roughly a few dozen kB of code).
+#
+# Trade-offs (documented in docs/milestone-https-transport.md):
+#   - Upstream labels 0.6 as "beta-quality". No TLS 1.3 (and 0.6 is the
+#     latest upstream release). ECDSA support requires configuration of
+#     the EC implementation + ECDSA, which our client profile enables.
+#   - No iPAddress SAN matching in the X.509 engine. CrossNook therefore
+#     authenticates a required DNS service name while allowing a separate
+#     numeric connect address for DNS-free LAN tests.
+#
+# Source pin: the original release tarball is no longer downloadable from
+# https://bearssl.org/ (the site resets connections from this network);
+# the Debian pool re-host of the *vanilla* 0.6 sources is used instead.
+# The dfsg.1 repack only removed the Windows T0 compiler binary
+# (T0Comp.exe); the library sources are unmodified 0.6 (verified via
+# debian/copyright Files-Excluded and byte-idempotent rebuild check).
+#
+# artifact: work/bearssl/bearssl_0.6+dfsg.1.orig.tar.xz
+# sha256:   102a625bd8f6155260867a50c508df8d8c3f796985dd744df1a68e5cd1a79004
+# url:      https://deb.debian.org/debian/pool/main/b/bearssl/bearssl_0.6+dfsg.1.orig.tar.xz
+#          (Debian source package bearssl_0.6+dfsg.1-6)
+#
+# Build: toolchain/Dockerfile -> /opt/bearssl (static libbearssl.a + inc/*.h).
+# Consumers include <bearssl.h> with -I/opt/bearssl/include and link
+# -L/opt/bearssl/lib -lbearssl.

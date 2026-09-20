@@ -1,10 +1,12 @@
-/* Bounded KOReader progress-sync protocol core over plain HTTP. */
+/* Bounded KOReader progress-sync protocol core over HTTP or verified HTTPS. */
 #ifndef CN_SYNC_KOSYNC_H
 #define CN_SYNC_KOSYNC_H
 
 #include <stddef.h>
 
 #include "net/netsimple.h"
+
+struct cn_tls_config;
 
 #define CN_KOSYNC_DOCUMENT_ID_BYTES 32
 #define CN_KOSYNC_USERNAME_MAX 255
@@ -33,6 +35,9 @@ typedef struct cn_kosync_client {
     char base_path[CN_KOSYNC_BASE_PATH_MAX + 1];
     char username[CN_KOSYNC_USERNAME_MAX + 1];
     char userkey[CN_KOSYNC_USERKEY_MAX + 1];
+    char connect_host[CN_NETSIMPLE_HOST_MAX + 1];
+    const struct cn_tls_config *tls;
+    int use_tls;
     unsigned connect_ms;
     unsigned recv_ms;
 } cn_kosync_client;
@@ -74,6 +79,10 @@ cn_kosync_result cn_kosync_client_init(cn_kosync_client *client,
                                        const char *base_url,
                                        const char *username,
                                        const char *userkey);
+/* tls and every path it references must outlive client and its requests. */
+cn_kosync_result cn_kosync_client_set_tls(
+    cn_kosync_client *client, const struct cn_tls_config *tls,
+    const char *connect_host);
 
 cn_kosync_result cn_kosync_serialize_progress(
     const cn_kosync_progress *progress,

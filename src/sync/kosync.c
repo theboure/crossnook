@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "sync/kosync.h"
+#include "net/tlssimple.h"
 
 #define KOSYNC_ACCEPT "application/vnd.koreader.v1+json"
 #define KOSYNC_CONTENT_TYPE "application/json"
@@ -191,11 +192,23 @@ cn_kosync_result cn_kosync_client_init(cn_kosync_client *client,
     size_t path_length;
     int parsed_port;
 
-    if (!client || !base_url || strncmp(base_url, "http://", 7) != 0 ||
+    size_t scheme_len;
+    int use_tls;
+
+    if (!client || !base_url ||
         !header_text_ok(username, CN_KOSYNC_USERNAME_MAX, 0) ||
         !header_text_ok(userkey, CN_KOSYNC_USERKEY_MAX, 0))
         return CN_KOSYNC_INVALID;
-    authority = base_url + 7;
+    if (strncmp(base_url, "http://", 7) == 0) {
+        scheme_len = 7;
+        use_tls = 0;
+    } else if (strncmp(base_url, "https://", 8) == 0) {
+        scheme_len = 8;
+        use_tls = 1;
+    } else {
+        return CN_KOSYNC_INVALID;
+    }
+    authority = base_url + scheme_len;
     authority_end = authority;
     while (*authority_end && *authority_end != '/') {
         if (*authority_end == ':' && !colon)
@@ -222,7 +235,7 @@ cn_kosync_result cn_kosync_client_init(cn_kosync_client *client,
                           (size_t)(authority_end - authority)) !=
             CN_KOSYNC_OK)
             return CN_KOSYNC_INVALID;
-        strcpy(client->port, "80");
+        strcpy(client->port, use_tls ? "443" : "80");
     }
     if (!cn_netsimple_parse_port(client->port, &parsed_port))
         return CN_KOSYNC_INVALID;
@@ -245,8 +258,27 @@ cn_kosync_result cn_kosync_client_init(cn_kosync_client *client,
         return CN_KOSYNC_INVALID;
     memcpy(client->username, username, strlen(username) + 1);
     memcpy(client->userkey, userkey, strlen(userkey) + 1);
+    client->use_tls = use_tls;
     client->connect_ms = CN_NETSIMPLE_DEFAULT_CONNECT_MS;
     client->recv_ms = CN_NETSIMPLE_DEFAULT_RECV_MS;
+    return CN_KOSYNC_OK;
+}
+
+cn_kosync_result cn_kosync_client_set_tls(
+    cn_kosync_client *client, const struct cn_tls_config *tls,
+    const char *connect_host)
+{
+    if (!client || !client->use_tls || !tls || !tls->ca_path)
+        return CN_KOSYNC_INVALID;
+    if (connect_host) {
+        size_t length = bounded_length(connect_host, CN_NETSIMPLE_HOST_MAX);
+
+        if (length == 0 || length > CN_NETSIMPLE_HOST_MAX ||
+            !cn_netsimple_validate(connect_host, client->port, "/"))
+            return CN_KOSYNC_INVALID;
+        memcpy(client->connect_host, connect_host, length + 1);
+    }
+    client->tls = tls;
     return CN_KOSYNC_OK;
 }
 
@@ -791,7 +823,7 @@ cn_kosync_result cn_kosync_put_progress(const cn_kosync_client *client,
     size_t json_len;
 
     init_outcome(outcome);
-    if (!client || !progress)
+    if (!client || !progress || (client->use_tls && !client->tls))
         return CN_KOSYNC_INVALID;
     json = (char *)malloc(CN_KOSYNC_JSON_MAX + 1);
     buffer = (char *)malloc(response_cap);
@@ -813,9 +845,11 @@ cn_kosync_result cn_kosync_put_progress(const cn_kosync_client *client,
     memset(&request, 0, sizeof request);
     request.method = CN_NETSIMPLE_METHOD_PUT;
     request.host = client->host; request.port = client->port;
+    request.connect_host = client->connect_host[0] ? client->connect_host : NULL;
     request.path = path; request.headers = headers; request.header_count = 3;
     request.content_type = KOSYNC_CONTENT_TYPE;
     request.body = json; request.body_len = json_len;
+    request.tls = client->use_tls ? client->tls : NULL;
     transport = cn_netsimple_exchange(&request, buffer, response_cap,
                                       client->connect_ms, client->recv_ms,
                                       &response);
@@ -859,7 +893,8 @@ cn_kosync_result cn_kosync_get_progress(const cn_kosync_client *client,
     size_t response_cap = CN_KOSYNC_JSON_MAX + CN_NETSIMPLE_REQUEST_MAX;
 
     init_outcome(outcome);
-    if (!client || !progress || !document_id_ok(document_id))
+    if (!client || !progress || !document_id_ok(document_id) ||
+        (client->use_tls && !client->tls))
         return CN_KOSYNC_INVALID;
     if (snprintf(suffix, sizeof suffix, "/syncs/progress/%s",
                  document_id) >= (int)sizeof suffix ||
@@ -874,7 +909,9 @@ cn_kosync_result cn_kosync_get_progress(const cn_kosync_client *client,
     memset(&request, 0, sizeof request);
     request.method = CN_NETSIMPLE_METHOD_GET;
     request.host = client->host; request.port = client->port;
+    request.connect_host = client->connect_host[0] ? client->connect_host : NULL;
     request.path = path; request.headers = headers; request.header_count = 3;
+    request.tls = client->use_tls ? client->tls : NULL;
     transport = cn_netsimple_exchange(&request, buffer, response_cap,
                                       client->connect_ms, client->recv_ms,
                                       &response);

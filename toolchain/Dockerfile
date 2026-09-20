@@ -22,6 +22,11 @@
 #     optional codec/shaping feature off: only zlib+freetype+xxhash enabled.
 # A font (testapp/test-font.ttf) is copied to /opt/test-font.ttf so host
 # validation can register a real TTF inside the image.
+#
+# BearSSL 0.6 (TLS 1.2, MIT) -> /opt/bearssl (static lib + inc/*.h).
+# HTTPS transport foundation. See toolchain/bearssl/pin.txt for rationale,
+# licensing and source provenance (Debian re-host of vanilla 0.6).
+#     sha256:  102a625bd8f6155260867a50c508df8d8c3f796985dd744df1a68e5cd1a79004
 
 FROM debian:bookworm-slim
 
@@ -40,7 +45,11 @@ ARG XXHASH_SHA256=baee0c6afd4f03165de7a4e67988d16f0f2b257b51d0e3cb91909302a26a79
 ARG CRENGINE_TGZ=crengine-b05cf007.tar.gz
 ARG CRENGINE_SHA256=7deeb72a1306cff1d71295d6948db6fdc784af46c1131a05684e8d2694747c14
 
+ARG BEARSSL_TGZ=bearssl_0.6+dfsg.1.orig.tar.xz
+ARG BEARSSL_SHA256=102a625bd8f6155260867a50c508df8d8c3f796985dd744df1a68e5cd1a79004
+
 LABEL org.crossnook.crengine-revision=b05cf00791d2ba17c1f077fc69e7bd68cf780b6a
+LABEL org.crossnook.bearssl-revision=0.6
 
 RUN set -eux; \
     apt-get update; \
@@ -175,6 +184,42 @@ RUN set -eux; \
     readelf -l /tmp/creimg | grep -qE "INTERP|Dynamic" && { echo "WARN dynamic sections"; exit 1; } || echo "crengine static/non-PIE: OK"; \
     qemu-arm -L /opt/tc/arm-linux-musleabi-cross/arm-linux-musleabi /tmp/creimg; \
     rm -f /tmp/creimg /tmp/creimg.c
+
+# BearSSL 0.6 (TLS 1.2, MIT) as a static library for the HTTPS transport.
+# Every src/**/*.c is compiled (x86-specific files self-disable via
+# preprocessor guards on non-x86: BR_AES_X86NI, BR_amd64, BR_SSE2, ...).
+COPY work/bearssl/${BEARSSL_TGZ} /opt/${BEARSSL_TGZ}
+
+RUN set -eux; \
+    echo "${BEARSSL_SHA256}  /opt/${BEARSSL_TGZ}" | sha256sum -c -; \
+    tar -xJf /opt/${BEARSSL_TGZ} -C /opt; \
+    rm /opt/${BEARSSL_TGZ}; \
+    mv /opt/bearssl-0.6 /opt/bearssl-src; \
+    mkdir -p /opt/bearssl/lib /opt/bearssl/include /opt/bearssl-obj; \
+    cd /opt/bearssl-obj; \
+    for S in $(find /opt/bearssl-src/src -name '*.c' | sort); do \
+      N=$(basename "${S%.*}" | tr -c 'A-Za-z0-9_' '_')_$(printf '%s' "$S" | sha256sum | cut -c1-12); \
+      arm-linux-musleabi-gcc -std=c99 -O2 -Wall -Wextra \
+        -I/opt/bearssl-src/inc -I/opt/bearssl-src/src -c "$S" -o "$N.o"; \
+    done; \
+    n=$(ls *.o | wc -l); echo "bearssl objects: $n"; test "$n" -gt 200; \
+    arm-linux-musleabi-ar rcs /opt/bearssl/lib/libbearssl.a *.o; \
+    rm -rf /opt/bearssl-obj; \
+    cp /opt/bearssl-src/inc/bearssl.h /opt/bearssl-src/inc/bearssl_*.h /opt/bearssl/include/; \
+    rm -rf /opt/bearssl-src
+
+# In-image link+run smoke: seed HMAC-DRBG, initialise a full TLS 1.2
+# client profile, inject entropy, emit a ClientHello, and run the minimal
+# X.509 engine's trust-anchor/name machinery (all under qemu-arm).
+RUN set -eux; \
+    printf '#include <stdio.h>\n#include <string.h>\n#include <bearssl.h>\nint main(){\n  br_hmac_drbg_context rng; unsigned char seed[32], a[16], b[16], c[16]; int i, ok=1;\n  for(i=0;i<32;i++) seed[i]=(unsigned char)(i*7+1);\n  br_hmac_drbg_init(&rng,&br_sha256_vtable,seed,sizeof seed);\n  br_hmac_drbg_generate(&rng,a,sizeof a);\n  br_hmac_drbg_init(&rng,&br_sha256_vtable,seed,sizeof seed);\n  br_hmac_drbg_generate(&rng,b,sizeof b);\n  br_hmac_drbg_generate(&rng,c,sizeof c);\n  ok = ok && memcmp(a,b,16)==0 && memcmp(b,c,16)!=0;\n  br_ssl_client_context cc; br_x509_minimal_context xc;\n  br_ssl_client_init_full(&cc,&xc,0,0);\n  static unsigned char io[BR_SSL_BUFSIZE_MONO];\n  br_ssl_engine_set_buffer(&cc.eng,io,sizeof io,0);\n  br_ssl_engine_inject_entropy(&cc.eng,c,sizeof c);\n  br_ssl_client_reset(&cc,"example.invalid",0);\n  int err = br_ssl_engine_last_error(&cc.eng);\n  unsigned st = br_ssl_engine_current_state(&cc.eng);\n  ok = ok && err==BR_ERR_OK && (st & BR_SSL_SENDREC)!=0;\n  printf(ok?"BEARSSL ARM SMOKE OK\\n":"BEARSSL ARM SMOKE FAIL\\n");\n  return ok?0:1;\n}\n' > /tmp/brchk.c; \
+    arm-linux-musleabi-gcc -std=c99 -static -no-pie -fno-pie -O2 \
+      -I/opt/bearssl/include /tmp/brchk.c -o /tmp/brchk \
+      /opt/bearssl/lib/libbearssl.a; \
+    file /tmp/brchk | grep -q "ARM" && echo "bearssl static link: ARM OK"; \
+    readelf -l /tmp/brchk | grep -qE "INTERP|Dynamic" && { echo "WARN dynamic sections"; exit 1; } || echo "bearssl static/non-PIE: OK"; \
+    qemu-arm -L /opt/tc/arm-linux-musleabi-cross/arm-linux-musleabi /tmp/brchk; \
+    rm -f /tmp/brchk /tmp/brchk.c
 
 WORKDIR /io
 

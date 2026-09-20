@@ -16,6 +16,7 @@
 #include <netinet/in.h>
 
 #include "net/netsimple.h"
+#include "net/tlssimple.h"
 
 static int64_t now_ms(void)
 {
@@ -32,6 +33,44 @@ static int poll_interval_ms(int64_t deadline)
     if (remaining > INT_MAX)
         return INT_MAX;
     return (int)remaining;
+}
+
+static cn_netsimple_result cn_tls_map(cn_tls_result r)
+{
+    switch (r) {
+    case CN_TLS_OK:
+        return CN_NETSIMPLE_OK;
+    case CN_TLS_INVALID:
+        return CN_NETSIMPLE_INVALID;
+    case CN_TLS_INTERNAL:
+        return CN_NETSIMPLE_TLS_INTERNAL;
+    case CN_TLS_ENTROPY_FAILED:
+        return CN_NETSIMPLE_TLS_ENTROPY_FAILED;
+    case CN_TLS_INVALID_CA:
+        return CN_NETSIMPLE_TLS_INVALID_CA;
+    case CN_TLS_HANDSHAKE_FAILED:
+        return CN_NETSIMPLE_TLS_HANDSHAKE_FAILED;
+    case CN_TLS_HANDSHAKE_TIMEOUT:
+        return CN_NETSIMPLE_TLS_HANDSHAKE_TIMEOUT;
+    case CN_TLS_TRUST_FAILED:
+        return CN_NETSIMPLE_TLS_TRUST_FAILED;
+    case CN_TLS_HOSTNAME_MISMATCH:
+        return CN_NETSIMPLE_TLS_HOSTNAME_MISMATCH;
+    case CN_TLS_CERT_TIME_FAILED:
+        return CN_NETSIMPLE_TLS_CERT_TIME_FAILED;
+    case CN_TLS_CERT_INVALID:
+        return CN_NETSIMPLE_TLS_CERT_INVALID;
+    case CN_TLS_PROTOCOL_FAILED:
+        return CN_NETSIMPLE_TLS_PROTOCOL_FAILED;
+    case CN_TLS_CLOSED:
+        return CN_NETSIMPLE_TLS_PROTOCOL_FAILED;
+    case CN_TLS_RECV_TIMEOUT:
+        return CN_NETSIMPLE_TLS_RECV_TIMEOUT;
+    case CN_TLS_SEND_TIMEOUT:
+        return CN_NETSIMPLE_SEND_TIMEOUT;
+    default:
+        return CN_NETSIMPLE_TLS_INTERNAL;
+    }
 }
 
 int cn_netsimple_parse_ipv4(const char *text, unsigned char out[4])
@@ -213,6 +252,7 @@ cn_netsimple_result cn_netsimple_build_exchange_request(
 
     if (!spec || !request || !request_len || request_cap == 0 ||
         !cn_netsimple_validate(spec->host, spec->port, spec->path) ||
+        (spec->connect_host && !host_text_ok(spec->connect_host)) ||
         spec->header_count > CN_NETSIMPLE_HEADER_MAX ||
         (spec->header_count != 0 && !spec->headers) ||
         (spec->body_len != 0 && !spec->body))
@@ -241,8 +281,16 @@ cn_netsimple_result cn_netsimple_build_exchange_request(
         append_text(request, request_cap, &used, spec->path) != CN_NETSIMPLE_OK ||
         append_text(request, request_cap, &used,
                     " HTTP/1.0\r\nHost: ") != CN_NETSIMPLE_OK ||
-        append_text(request, request_cap, &used, spec->host) != CN_NETSIMPLE_OK ||
-        append_text(request, request_cap, &used, "\r\n") != CN_NETSIMPLE_OK)
+        append_text(request, request_cap, &used, spec->host) != CN_NETSIMPLE_OK)
+        return CN_NETSIMPLE_INVALID;
+    if ((spec->tls && strcmp(spec->port, "443") != 0) ||
+        (!spec->tls && strcmp(spec->port, "80") != 0)) {
+        if (append_text(request, request_cap, &used, ":") != CN_NETSIMPLE_OK ||
+            append_text(request, request_cap, &used,
+                        spec->port) != CN_NETSIMPLE_OK)
+            return CN_NETSIMPLE_INVALID;
+    }
+    if (append_text(request, request_cap, &used, "\r\n") != CN_NETSIMPLE_OK)
         return CN_NETSIMPLE_INVALID;
     for (i = 0; i < spec->header_count; ++i) {
         if (append_text(request, request_cap, &used,
@@ -341,6 +389,10 @@ cn_netsimple_result cn_netsimple_parse_status(const char *buf, size_t len,
         return result;
     out->status = code;
     out->status_text = code_text;
+    while (i + out->status_text_bytes < len &&
+           code_text[out->status_text_bytes] != '\r' &&
+           code_text[out->status_text_bytes] != '\n')
+        out->status_text_bytes++;
 
     crlfcrlf = len;
     lflf = len;
@@ -367,6 +419,86 @@ cn_netsimple_result cn_netsimple_parse_status(const char *buf, size_t len,
     out->body_bytes = len - out->header_bytes;
     out->total_bytes = len;
     return CN_NETSIMPLE_OK;
+}
+
+/* Return 2 with a framed response size, 1 for complete unframed headers,
+ * 0 for incomplete headers, and -1 for malformed/overflowing length. */
+static int response_content_length(const char *buf, size_t len,
+                                   size_t *expected)
+{
+    size_t header_end = 0;
+    size_t line;
+    size_t body_offset;
+    size_t content_length = 0;
+    int found = 0;
+
+    for (line = 0; line + 3 < len; line++) {
+        if (buf[line] == '\r' && buf[line + 1] == '\n' &&
+            buf[line + 2] == '\r' && buf[line + 3] == '\n') {
+            header_end = line;
+            body_offset = line + 4;
+            break;
+        }
+    }
+    if (!header_end)
+        return 0;
+    line = 0;
+    while (line < header_end && buf[line] != '\n')
+        line++;
+    if (line < header_end)
+        line++;
+    while (line < header_end) {
+        static const char name[] = "content-length";
+        size_t end = line;
+        size_t colon;
+        size_t i;
+        size_t value = 0;
+        int digits = 0;
+        int name_match;
+
+        while (end < header_end && buf[end] != '\n')
+            end++;
+        colon = line;
+        while (colon < end && buf[colon] != ':')
+            colon++;
+        name_match = colon - line == sizeof name - 1;
+        for (i = 0; name_match && i < sizeof name - 1; i++) {
+            unsigned char c = (unsigned char)buf[line + i];
+
+            if (c >= 'A' && c <= 'Z')
+                c = (unsigned char)(c - 'A' + 'a');
+            if (c != (unsigned char)name[i])
+                name_match = 0;
+        }
+        if (name_match) {
+            i = colon + 1;
+            while (i < end && (buf[i] == ' ' || buf[i] == '\t'))
+                i++;
+            while (i < end && buf[i] >= '0' && buf[i] <= '9') {
+                unsigned digit = (unsigned)(buf[i] - '0');
+
+                if (value > (SIZE_MAX - digit) / 10)
+                    return -1;
+                value = value * 10 + digit;
+                digits = 1;
+                i++;
+            }
+            while (i < end && (buf[i] == ' ' || buf[i] == '\t' ||
+                               buf[i] == '\r'))
+                i++;
+            if (!digits || i != end || found)
+                return -1;
+            content_length = value;
+            found = 1;
+        }
+        line = end + 1;
+    }
+    if (!found)
+        return 1;
+    if (content_length > SIZE_MAX - body_offset)
+        return -1;
+    *expected = body_offset + content_length;
+    return 2;
 }
 
 cn_netsimple_result cn_netsimple_connect_error(int error)
@@ -507,6 +639,9 @@ cn_netsimple_result cn_netsimple_exchange(
     int send_flags;
     int64_t send_deadline;
     int early_response = 0;
+    const char *connect_host;
+    int tls_framing = 0;
+    size_t tls_expected = 0;
 
     if (!spec || !out)
         return CN_NETSIMPLE_INVALID;
@@ -519,11 +654,12 @@ cn_netsimple_result cn_netsimple_exchange(
                                                   &request_len);
     if (result != CN_NETSIMPLE_OK)
         return result;
+    connect_host = spec->connect_host ? spec->connect_host : spec->host;
 
     memset(&address6, 0, sizeof address6);
     address6.sin_family = AF_INET;
     address6.sin_port = htons((unsigned short)atoi(spec->port));
-    if (cn_netsimple_parse_ipv4(spec->host, address_bytes)) {
+    if (cn_netsimple_parse_ipv4(connect_host, address_bytes)) {
         memcpy(&address6.sin_addr.s_addr, address_bytes, 4);
         fd = socket(AF_INET, SOCK_STREAM, 0);
         if (fd < 0)
@@ -544,7 +680,7 @@ cn_netsimple_result cn_netsimple_exchange(
         hints.ai_socktype = SOCK_STREAM;
         hints.ai_flags = AI_NUMERICSERV;
         resolved = NULL;
-        if (getaddrinfo(spec->host, spec->port, &hints, &resolved) != 0 ||
+        if (getaddrinfo(connect_host, spec->port, &hints, &resolved) != 0 ||
             !resolved)
             return CN_NETSIMPLE_RESOLVE_ERROR;
         for (entry = resolved; entry; entry = entry->ai_next) {
@@ -576,6 +712,82 @@ cn_netsimple_result cn_netsimple_exchange(
         result = CN_NETSIMPLE_SEND_ERROR;
         goto done;
     }
+
+    if (spec->tls) {
+        cn_tls_conn tls_conn;
+        cn_tls_result tls_result;
+        int64_t tls_deadline = now_ms() + (int64_t)recv_ms;
+
+        tls_result = cn_tls_open(&tls_conn, fd, spec->tls, spec->host,
+                                 tls_deadline);
+        fd = -1; /* the TLS layer owns the descriptor from here on */
+        if (tls_result != CN_TLS_OK) {
+            result = cn_tls_map(tls_result);
+            goto done;
+        }
+        tls_result = cn_tls_send_all(&tls_conn, request, request_len,
+                                     tls_deadline);
+        if (tls_result == CN_TLS_OK && spec->body_len != 0)
+            tls_result = cn_tls_send_all(&tls_conn, spec->body,
+                                         spec->body_len, tls_deadline);
+        if (tls_result != CN_TLS_OK) {
+            result = tls_result == CN_TLS_SEND_TIMEOUT
+                         ? CN_NETSIMPLE_SEND_TIMEOUT
+                         : CN_NETSIMPLE_SEND_ERROR;
+            cn_tls_close(&tls_conn);
+            goto done;
+        }
+
+        total = 0;
+        recv_deadline = now_ms() + (int64_t)recv_ms;
+        while (1) {
+            size_t got = 0;
+            int closed = 0;
+
+            if (total >= buffer_cap) {
+                truncated = 1;
+                break;
+            }
+            tls_result = cn_tls_recv_some(&tls_conn, buffer + total,
+                                          buffer_cap - total, recv_deadline,
+                                          &got, &closed);
+            total += got;
+            {
+                int framed = response_content_length(buffer, total,
+                                                     &tls_expected);
+
+                if (framed < 0 || (framed == 2 && total > tls_expected)) {
+                    result = CN_NETSIMPLE_BAD_RESPONSE;
+                    cn_tls_close(&tls_conn);
+                    goto done;
+                }
+                tls_framing = framed;
+                if (framed == 2 && total == tls_expected)
+                    break;
+            }
+            if (tls_result == CN_TLS_CLOSED) {
+                if (tls_framing == 0 ||
+                    (tls_framing == 2 && total != tls_expected)) {
+                    result = CN_NETSIMPLE_TRUNCATED;
+                    cn_tls_close(&tls_conn);
+                    goto done;
+                }
+                break;
+            }
+            if (tls_result != CN_TLS_OK) {
+                result = tls_result == CN_TLS_RECV_TIMEOUT
+                             ? CN_NETSIMPLE_TLS_RECV_TIMEOUT
+                             : CN_NETSIMPLE_TLS_PROTOCOL_FAILED;
+                cn_tls_close(&tls_conn);
+                goto done;
+            }
+            if (closed || got == 0)
+                break;
+        }
+        cn_tls_close(&tls_conn);
+        goto recv_done;
+    }
+
     send_deadline = now_ms() + (int64_t)recv_ms;
     result = send_buffer(fd, request, request_len, send_deadline,
                          &early_response);
@@ -702,7 +914,11 @@ const char *cn_netsimple_result_name(cn_netsimple_result result)
         "ok", "invalid", "resolve-error", "connect-refused",
         "network-unreachable", "host-unreachable", "connect-timeout",
         "connect-error", "send-error", "recv-error", "recv-timeout",
-        "truncated", "bad-response", "send-timeout"
+        "truncated", "bad-response", "send-timeout",
+        "tls-entropy-failed", "tls-invalid-ca", "tls-handshake-failed",
+        "tls-handshake-timeout", "tls-trust-failed",
+        "tls-hostname-mismatch", "tls-cert-time-failed", "tls-cert-invalid",
+        "tls-protocol-failed", "tls-internal", "tls-recv-timeout"
     };
     if ((size_t)result < CN_NETSIMPLE_LENGTH)
         return names[result];

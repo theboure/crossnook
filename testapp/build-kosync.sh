@@ -31,13 +31,21 @@ MSYS_NO_PATHCONV=1 docker run --rm \
     mkdir -p /o
     cd /o
 
+    BEARSSL=/opt/bearssl
+    BEARSSL_LIB=/opt/bearssl/lib/libbearssl.a
+    if test -f /io/work/bearssl-check/libbearssl.a; then
+      BEARSSL=/io/work/bearssl-check
+      BEARSSL_LIB=/io/work/bearssl-check/libbearssl.a
+    fi
     CFLAGS="-std=c11 -D_POSIX_C_SOURCE=200809L -static -no-pie -fno-pie"
-    CFLAGS="$CFLAGS -O2 -Wall -Wextra -Werror -I/io/src"
+    CFLAGS="$CFLAGS -O2 -Wall -Wextra -Werror -I/io/src -I$BEARSSL/include"
     arm-linux-musleabi-gcc $CFLAGS -c /io/src/app/kosync-test.c -o kosync-test.o
     arm-linux-musleabi-gcc $CFLAGS -c /io/src/sync/kosync.c -o kosync.o
     arm-linux-musleabi-gcc $CFLAGS -c /io/src/net/netsimple.c -o netsimple.o
+    arm-linux-musleabi-gcc $CFLAGS -c /io/src/net/tlssimple.c -o tlssimple.o
     arm-linux-musleabi-gcc -static -no-pie -fno-pie -O2 -Wall -Wextra -Werror \
-      kosync-test.o kosync.o netsimple.o -o /io/testapp/crossnook-kosync-test
+      kosync-test.o kosync.o netsimple.o tlssimple.o $BEARSSL_LIB \
+      -o /io/testapp/crossnook-kosync-test
 
     echo "--- file ---"
     file /io/testapp/crossnook-kosync-test
@@ -54,7 +62,7 @@ MSYS_NO_PATHCONV=1 docker run --rm \
     echo "--- isolation ---"
     test -z "$(grep -l "libcurl\|openssl\|mbedtls\|wolfssl" \
       /io/src/sync/*.c /io/src/sync/*.h /io/src/net/*.c /io/src/net/*.h || true)"
-    echo "OK: KOSync protocol core remains plain HTTP without TLS libraries"
+    echo "OK: KOSync protocol stays above the shared HTTP/TLS transport"
 
     Q="qemu-arm -L /opt/tc/arm-linux-musleabi-cross/arm-linux-musleabi"
     echo "--- API and golden fixture smoke ---"
