@@ -14,6 +14,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 
+#include "net/dnssimple.h"
 #include "net/netsimple.h"
 #include "net/tlssimple.h"
 
@@ -1107,6 +1108,112 @@ static int parse_positive_long(const char *text, long *value)
     return 1;
 }
 
+static int dns_config_from_args(cn_dns_config *config, const char *server,
+                                const char *port_text,
+                                const char *timeout_text,
+                                const char *second_server)
+{
+    long port;
+    long timeout;
+
+    if (!config || !parse_positive_long(port_text, &port) || port > 65535 ||
+        !parse_positive_long(timeout_text, &timeout) || timeout > 60000)
+        return 0;
+    memset(config, 0, sizeof *config);
+    config->servers[0] = server;
+    config->server_count = 1;
+    if (second_server) {
+        config->servers[1] = second_server;
+        config->server_count = 2;
+    }
+    config->port = (unsigned)port;
+    config->timeout_ms = (unsigned)timeout;
+    return 1;
+}
+
+static int run_dns_query(int argc, char **argv)
+{
+    cn_dns_config config;
+    cn_dns_answer answer;
+    cn_dns_result result;
+    size_t i;
+
+    if ((argc != 6 && argc != 7) ||
+        !dns_config_from_args(&config, argv[2], argv[3], argv[4],
+                              argc == 7 ? argv[6] : NULL))
+        return 2;
+    result = cn_dnssimple_resolve_a(&config, argv[5], &answer);
+    if (result != CN_DNS_OK) {
+        fprintf(stderr, "NETTEST DNS FAIL %s\n",
+                cn_dnssimple_result_name(result));
+        return 1;
+    }
+    printf("NETTEST DNS OK host=%s count=%u server=%u", argv[5],
+           (unsigned)answer.count, (unsigned)answer.server_index);
+    for (i = 0; i < answer.count; i++)
+        printf(" addr%u=%s", (unsigned)i, answer.ipv4[i]);
+    printf("\n");
+    return 0;
+}
+
+static int run_https_dns(int argc, char **argv)
+{
+    cn_dns_config dns;
+    cn_dns_answer answer;
+    cn_dns_result dns_result;
+    cn_tls_config tls;
+    cn_netsimple_request request;
+    cn_netsimple_response response;
+    cn_netsimple_result result;
+    char buffer[CN_NETSIMPLE_RESPONSE_MAX];
+    long timeout = CN_NETSIMPLE_DEFAULT_RECV_MS;
+
+    if (argc < 9 || argc > 11 ||
+        !dns_config_from_args(&dns, argv[2], argv[3], argv[4], NULL))
+        return 2;
+    memset(&tls, 0, sizeof tls);
+    tls.ca_path = argv[7];
+    if (argc >= 10) {
+        long epoch;
+
+        if (!parse_positive_long(argv[9], &epoch))
+            return 2;
+        tls_fixed_now = (time_t)epoch;
+        tls.get_time = tls_fixed_time;
+    }
+    if (argc == 11 && !parse_positive_long(argv[10], &timeout))
+        return 2;
+
+    dns_result = cn_dnssimple_resolve_a(&dns, argv[6], &answer);
+    if (dns_result != CN_DNS_OK) {
+        fprintf(stderr, "NETTEST DNS FAIL %s\n",
+                cn_dnssimple_result_name(dns_result));
+        return 1;
+    }
+    printf("NETTEST DNS ROUTE host=%s address=%s server=%u\n", argv[6],
+           answer.ipv4[0], (unsigned)answer.server_index);
+
+    memset(&request, 0, sizeof request);
+    request.method = CN_NETSIMPLE_METHOD_GET;
+    request.connect_host = answer.ipv4[0];
+    request.port = argv[5];
+    request.host = argv[6];
+    request.path = argv[8];
+    request.tls = &tls;
+    result = cn_netsimple_exchange(&request, buffer, sizeof buffer,
+                                   (unsigned)timeout, (unsigned)timeout,
+                                   &response);
+    if (result != CN_NETSIMPLE_OK) {
+        fprintf(stderr, "NETTEST HTTPS DNS GET FAIL %s\n",
+                cn_netsimple_result_name(result));
+        return 1;
+    }
+    printf("NETTEST HTTPS DNS GET %d %llu %llu OK\n", response.status,
+           (unsigned long long)response.body_bytes,
+           (unsigned long long)response.total_bytes);
+    return response.status == 200 ? 0 : 1;
+}
+
 static int run_https_live(int argc, char **argv, int put)
 {
     cn_tls_config tls;
@@ -1242,6 +1349,8 @@ static void print_usage(void)
             "       crossnook-net-test --tls-distrust <pki-dir>\n"
             "       crossnook-net-test --tls-time <pki-dir>\n"
             "       crossnook-net-test --tls-infra <pki-dir>\n"
+            "       crossnook-net-test --dns-query <dns-server> <dns-port> <timeout-ms> <hostname> [dns-server-2]\n"
+            "       crossnook-net-test --https-get-dns <dns-server> <dns-port> <dns-timeout-ms> <https-port> <server-name> <ca> <path> [epoch] [timeout-ms]\n"
             "       crossnook-net-test --https-get <connect-host> <port> <server-name> <ca> <path> [epoch] [timeout-ms]\n"
             "       crossnook-net-test --https-put <connect-host> <port> <server-name> <ca> <path> <body> [epoch] [timeout-ms]\n"
             "       crossnook-net-test --tls-write-timeout <connect-host> <port> <server-name> <ca> <epoch> <timeout-ms>\n"
@@ -1266,6 +1375,10 @@ int main(int argc, char **argv)
         return run_tls_time(argv[2]);
     if (argc == 3 && strcmp(argv[1], "--tls-infra") == 0)
         return run_tls_infra(argv[2]);
+    if (argc > 1 && strcmp(argv[1], "--dns-query") == 0)
+        return run_dns_query(argc, argv);
+    if (argc > 1 && strcmp(argv[1], "--https-get-dns") == 0)
+        return run_https_dns(argc, argv);
     if (argc > 1 && strcmp(argv[1], "--https-get") == 0)
         return run_https_live(argc, argv, 0);
     if (argc > 1 && strcmp(argv[1], "--https-put") == 0)

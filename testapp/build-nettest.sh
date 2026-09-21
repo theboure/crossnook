@@ -34,9 +34,11 @@ MSYS_NO_PATHCONV=1 docker run --rm \
     arm-linux-musleabi-gcc $CFLAGS \
       -c /io/src/net/netsimple.c -o netsimple.o
     arm-linux-musleabi-gcc $CFLAGS \
+      -c /io/src/net/dnssimple.c -o dnssimple.o
+    arm-linux-musleabi-gcc $CFLAGS \
       -c /io/src/net/tlssimple.c -o tlssimple.o
     arm-linux-musleabi-gcc -static -no-pie -fno-pie -O2 -Wall -Wextra \
-      nettest.o netsimple.o tlssimple.o $BEARSSL_LIB \
+      nettest.o netsimple.o dnssimple.o tlssimple.o $BEARSSL_LIB \
       -o /io/testapp/crossnook-net-test
 
     echo "--- file ---"

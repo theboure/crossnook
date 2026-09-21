@@ -11,6 +11,9 @@ from kosync_mock_server import KOSyncHandler, MockServer
 
 class HTTPSHandler(KOSyncHandler):
     def do_GET(self):
+        if self.server.host_log:
+            with open(self.server.host_log, "a", encoding="ascii") as output:
+                output.write((self.headers.get("Host") or "<none>") + "\n")
         if self.path == "/https/get":
             self.send_bytes(b"hello over verified TLS")
             return
@@ -76,10 +79,11 @@ class HTTPSHandler(KOSyncHandler):
 
 
 class HTTPSMockServer(MockServer):
-    def __init__(self, address, timestamp_start, quiet, stall_seconds):
+    def __init__(self, address, timestamp_start, quiet, stall_seconds, host_log):
         super().__init__(address, timestamp_start, quiet)
         self.RequestHandlerClass = HTTPSHandler
         self.stall_seconds = stall_seconds
+        self.host_log = host_log
 
 
 def run_raw_listener(host, port, mode, delay):
@@ -106,6 +110,7 @@ def main():
     parser.add_argument("--cert")
     parser.add_argument("--key")
     parser.add_argument("--sni-log")
+    parser.add_argument("--host-log")
     parser.add_argument("--timestamp-start", type=int, default=1_700_000_000)
     parser.add_argument("--stall-seconds", type=float, default=2.0)
     parser.add_argument("--mode",
@@ -121,7 +126,7 @@ def main():
         parser.error("--cert and --key are required in tls mode")
 
     server = HTTPSMockServer((args.host, args.port), args.timestamp_start,
-                             args.quiet, args.stall_seconds)
+                             args.quiet, args.stall_seconds, args.host_log)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.maximum_version = ssl.TLSVersion.TLSv1_2
