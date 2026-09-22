@@ -16,6 +16,7 @@ CFLAGS="$CFLAGS -O2 -Wall -Wextra -Werror -I/io/src -I$BEARSSL/include"
 arm-linux-musleabi-gcc $CFLAGS -c /io/src/app/kosync-test.c -o kosync-test.o
 arm-linux-musleabi-gcc $CFLAGS -c /io/src/sync/kosync.c -o kosync.o
 arm-linux-musleabi-gcc $CFLAGS -c /io/src/sync/kosync_sync.c -o kosync-sync.o
+arm-linux-musleabi-gcc $CFLAGS -c /io/src/sync/kosync_policy.c -o kosync-policy.o
 arm-linux-musleabi-gcc $CFLAGS -c /io/src/net/netsimple.c -o netsimple.o
 arm-linux-musleabi-gcc $CFLAGS -c /io/src/net/tlssimple.c -o tlssimple.o
 arm-linux-musleabi-gcc $CFLAGS -c /io/src/net/dnssimple.c -o dnssimple.o
@@ -29,7 +30,7 @@ arm-linux-musleabi-g++ -std=c++17 -static -no-pie -fno-pie \
   -I/opt/crengine/include -I/opt/freetype/include/freetype2 \
   -c /io/src/reader/reader.cpp -o reader.o
 arm-linux-musleabi-g++ -static -no-pie -fno-pie -O2 -Wall -Wextra \
-  kosync-test.o kosync.o kosync-sync.o netsimple.o tlssimple.o \
+  kosync-test.o kosync.o kosync-sync.o kosync-policy.o netsimple.o tlssimple.o \
   dnssimple.o timesimple.o koreader-identity.o md5.o book-identity.o \
   progress-store.o reader.o "$BEARSSL_LIB" \
   /opt/crengine/lib/libcrengine.a /opt/freetype/lib/libfreetype.a \
@@ -118,6 +119,7 @@ wait_for_fixed() {
 
 echo "--- directly relevant protocol regression ---"
 $Q $BIN --api-smoke
+$Q $BIN --policy-smoke
 $Q $BIN --mock-smoke http://host.docker.internal:18080
 $Q $BIN --roundtrip http://host.docker.internal:18080 test-user "$KEY" \
   e1a1e9016cfc9bca8c694187943e9c4f 519220cea448409961e6b3081a36eca3
@@ -129,7 +131,7 @@ for user in integration-local-only integration-remote-only \
   integration-same-percentage-different \
   integration-different-same-percentage integration-different \
   integration-unsupported integration-auth integration-malformed \
-  integration-timeout; do
+  integration-timeout integration-put-timeout; do
   make_credentials "$user"
   mkdir -p "$ROOT/$user"
 done
@@ -137,18 +139,18 @@ done
 $Q $BIN --local-set "$ROOT/integration-local-only" "$EPUB" \
   "/body/DocFragment[1]/body/p[1]/text().0" 3210
 expect_success local-present-remote-missing \
-  "status=ok decision=local-selected local=1 remote=0 saved=0 uploaded=1 document=e1a1e9016cfc9bca8c694187943e9c4f" \
+  "status=ok decision=local-selected local=1 remote=0 saved=0 uploaded=1 document=e1a1e9016cfc9bca8c694187943e9c4f.*local-save-attempted=0 remote-put-attempted=1 outcome=uploaded retry=none local-mutation=none remote-mutation=confirmed" \
   sync_once integration-local-only "$ROOT/integration-local-only"
 
 expect_success remote-present-local-missing \
-  "status=ok decision=remote-selected local=0 remote=1 saved=1 uploaded=0" \
+  "status=ok decision=remote-selected local=0 remote=1 saved=1 uploaded=0.*local-save-attempted=1 remote-put-attempted=0 outcome=imported retry=none local-mutation=confirmed remote-mutation=none" \
   sync_once integration-remote-only "$ROOT/integration-remote-only"
 expect_success remote-persisted-unchanged \
   "progress=6543 position=/body/DocFragment\[1\]/body/p\[3\]/text().5 OK" \
   $Q $BIN --local-get "$ROOT/integration-remote-only" "$EPUB"
 
 expect_success both-missing \
-  "status=ok decision=no-state local=0 remote=0 saved=0 uploaded=0" \
+  "status=ok decision=no-state local=0 remote=0 saved=0 uploaded=0.*local-save-attempted=0 remote-put-attempted=0 outcome=no-state retry=none local-mutation=none remote-mutation=none" \
   sync_once integration-both-missing "$ROOT/integration-both-missing"
 
 expect_success caller-established-wall-clock \
@@ -159,20 +161,20 @@ expect_success caller-established-wall-clock \
 $Q $BIN --local-set "$ROOT/integration-same" "$EPUB" \
   "/body/DocFragment[1]/body/p[1]/text().0" 3210
 expect_success same-position-same-percentage \
-  "status=ok decision=no-change local=1 remote=1 saved=0 uploaded=0" \
+  "status=ok decision=no-change local=1 remote=1 saved=0 uploaded=0.*local-save-attempted=0 remote-put-attempted=0 outcome=unchanged retry=none local-mutation=none remote-mutation=none" \
   sync_once integration-same "$ROOT/integration-same"
 
 $Q $BIN --local-set "$ROOT/integration-same-percentage-different" "$EPUB" \
   "/body/DocFragment[1]/body/p[1]/text().0" 3210
 expect_success same-position-different-percentage \
-  "status=ok decision=no-change local=1 remote=1 saved=0 uploaded=0" \
+  "status=ok decision=no-change local=1 remote=1 saved=0 uploaded=0.*local-save-attempted=0 remote-put-attempted=0 outcome=unchanged retry=none local-mutation=none remote-mutation=none" \
   sync_once integration-same-percentage-different \
     "$ROOT/integration-same-percentage-different"
 
 $Q $BIN --local-set "$ROOT/integration-different-same-percentage" "$EPUB" \
   "/body/DocFragment[1]/body/p[1]/text().0" 3210
 expect_success different-position-same-percentage \
-  "status=ok decision=ambiguous local=1 remote=1 saved=0 uploaded=0" \
+  "status=ok decision=ambiguous local=1 remote=1 saved=0 uploaded=0.*local-save-attempted=0 remote-put-attempted=0 outcome=conflict retry=explicit-action local-mutation=none remote-mutation=none" \
   sync_once integration-different-same-percentage \
     "$ROOT/integration-different-same-percentage"
 expect_success ambiguous-local-unchanged \
@@ -182,51 +184,64 @@ expect_success ambiguous-local-unchanged \
 $Q $BIN --local-set "$ROOT/integration-different" "$EPUB" \
   "/body/DocFragment[1]/body/p[1]/text().0" 3210
 expect_success different-position-different-percentage \
-  "status=ok decision=ambiguous local=1 remote=1 saved=0 uploaded=0" \
+  "status=ok decision=ambiguous local=1 remote=1 saved=0 uploaded=0.*local-save-attempted=0 remote-put-attempted=0 outcome=conflict retry=explicit-action local-mutation=none remote-mutation=none" \
   sync_once integration-different "$ROOT/integration-different"
 
 $Q $BIN --local-set "$ROOT/integration-unsupported" "$EPUB" \
   "/body/DocFragment[1]/body/p[1]/text().0" -1
 expect_failure local-unknown-percentage \
-  "status=local-unsupported decision=local-selected local=1 remote=0.*load=ok" \
+  "status=local-unsupported decision=local-selected local=1 remote=0.*load=ok.*local-save-attempted=0 remote-put-attempted=0 outcome=local-unsupported retry=explicit-action local-mutation=none remote-mutation=none" \
   sync_once integration-unsupported "$ROOT/integration-unsupported"
 
 make_credentials integration-auth wrong-key
 expect_failure authentication-failure \
-  "status=auth-failed.*kosync=auth-failed http=401 transport=ok" \
+  "status=auth-failed.*kosync=auth-failed http=401 transport=ok.*local-save-attempted=0 remote-put-attempted=0 outcome=auth-required retry=explicit-action local-mutation=none remote-mutation=none" \
   sync_once integration-auth "$ROOT/integration-auth"
 
-expect_failure dns-failure "status=dns-failed.*dns=nxdomain" \
+expect_failure dns-failure \
+  "status=dns-failed.*dns=nxdomain.*outcome=service-failure retry=explicit-action" \
   sync_once integration-both-missing "$ROOT/integration-both-missing" \
     "$URL" $((DNS_PORT + 4))
 
 expect_failure trusted-time-failure \
-  "status=trusted-time-failed.*time=invalid dns=invalid" \
+  "status=trusted-time-failed.*time=invalid dns=invalid.*outcome=trusted-time-unavailable retry=explicit-action" \
   sync_once integration-both-missing "$ROOT/integration-both-missing" \
     "$URL" "$DNS_PORT" sync - 1000 not-an-ip
 
 expect_failure wrong-tls-hostname \
-  "status=https-failed.*transport=tls-hostname-mismatch" \
+  "status=https-failed.*transport=tls-hostname-mismatch.*outcome=security-failure retry=explicit-action.*remote-mutation=none" \
   sync_once integration-both-missing "$ROOT/integration-both-missing" \
     "$WRONG_URL"
 
 expect_failure malformed-kosync-response \
-  "status=protocol-failed.*kosync=bad-json http=200 transport=ok" \
+  "status=protocol-failed.*kosync=bad-json http=200 transport=ok.*outcome=service-failure retry=explicit-action" \
   sync_once integration-malformed "$ROOT/integration-malformed"
 
 expect_failure transport-receive-timeout \
-  "status=https-failed.*kosync=transport-error.*transport=tls-recv-timeout" \
+  "status=https-failed.*kosync=transport-error.*transport=tls-recv-timeout.*outcome=connectivity-failure retry=automatic-later" \
   sync_once integration-timeout "$ROOT/integration-timeout" \
     "$URL" "$DNS_PORT" caller-established "$EPOCH" 200
 
+$Q $BIN --local-set "$ROOT/integration-put-timeout" "$EPUB" \
+  "/body/DocFragment[1]/body/p[1]/text().0" 3210
+expect_failure uncertain-put-result \
+  "status=https-failed decision=local-selected local=1 remote=0 saved=0 uploaded=0.*transport=tls-recv-timeout.*local-save-attempted=0 remote-put-attempted=1 outcome=connectivity-failure retry=automatic-later local-mutation=none remote-mutation=possible" \
+  sync_once integration-put-timeout "$ROOT/integration-put-timeout" \
+    "$URL" "$DNS_PORT" caller-established "$EPOCH" 200
+expect_success uncertain-put-was-stored \
+  "status=ok decision=no-change local=1 remote=1 saved=0 uploaded=0.*local-save-attempted=0 remote-put-attempted=0 outcome=unchanged retry=none local-mutation=none remote-mutation=none" \
+  sync_once integration-put-timeout "$ROOT/integration-put-timeout"
+
 echo "--- redacted transcript and hostname identity ---"
 PUT_EVENT='{"document":"e1a1e9016cfc9bca8c694187943e9c4f","method":"PUT","percentage":0.321,"progress":"/body/DocFragment[1]/body/p[1]/text().0","username":"integration-local-only"}'
+UNCERTAIN_PUT_EVENT='{"document":"e1a1e9016cfc9bca8c694187943e9c4f","method":"PUT","percentage":0.321,"progress":"/body/DocFragment[1]/body/p[1]/text().0","username":"integration-put-timeout"}'
 # Windows host writes these files while the container reads the bind mount.
 wait_for_fixed "$PUT_EVENT" /io/work/crossnook-kosync-integration.jsonl
+wait_for_fixed "$UNCERTAIN_PUT_EVENT" /io/work/crossnook-kosync-integration.jsonl
 wait_for_fixed secure.test.local /io/work/crossnook-kosync-sni.log
 wait_for_fixed secure.test.local:19443 /io/work/crossnook-kosync-host.log
 wait_for_fixed wrong.test /io/work/crossnook-kosync-sni.log
-test "$(grep -c '"method":"PUT"' /io/work/crossnook-kosync-integration.jsonl)" -eq 1
+test "$(grep -c '"method":"PUT"' /io/work/crossnook-kosync-integration.jsonl)" -eq 2
 test -z "$(grep -i 'auth-key\|dfb450efddbb5387197c84460623675b\|wrong-key' \
   /io/work/crossnook-kosync-integration.jsonl || true)"
 grep -Fxq secure.test.local /io/work/crossnook-kosync-sni.log

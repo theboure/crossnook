@@ -38,6 +38,7 @@ INTEGRATION_USERS = (
     "integration-auth",
     "integration-malformed",
     "integration-timeout",
+    "integration-put-timeout",
 )
 
 
@@ -204,6 +205,9 @@ class KOSyncHandler(BaseHTTPRequestHandler):
             "percentage": request["percentage"],
         })
         timestamp = self.server.store.put(username, request)
+        if username == "integration-put-timeout":
+            time.sleep(self.server.kosync_stall_seconds)
+            return
         self.send_json(200, {"document": request["document"],
                              "timestamp": timestamp})
 

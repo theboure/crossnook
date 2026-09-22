@@ -58,6 +58,8 @@ typedef struct cn_kosync_sync_result {
     cn_kosync_sync_decision decision;
     int local_present;
     int remote_present;
+    int local_save_attempted;
+    int remote_put_attempted;
     int local_saved;
     int remote_uploaded;
 

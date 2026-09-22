@@ -172,6 +172,7 @@ cn_kosync_sync_status cn_kosync_sync_once(
             result->remote_progress.logical_position;
         remote_record.position.progress_10000 =
             result->remote_progress.progress_10000;
+        result->local_save_attempted = 1;
         progress_result = cn_progress_store_save(
             config->progress_store, &local_identity, &remote_record);
         remote_record.position.location = NULL;
@@ -201,6 +202,7 @@ cn_kosync_sync_status cn_kosync_sync_once(
             status = map_kosync(result->kosync_result);
             goto done;
         }
+        result->remote_put_attempted = 1;
         result->kosync_result = cn_kosync_put_progress(
             &client, &upload, &result->put_timestamp,
             &result->kosync_outcome);
