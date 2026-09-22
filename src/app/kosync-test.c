@@ -5,8 +5,13 @@
 #include <string.h>
 #include <time.h>
 
+#include "book/koreader_identity.h"
+#include "net/dnssimple.h"
 #include "sync/kosync.h"
+#include "sync/kosync_sync.h"
 #include "net/tlssimple.h"
+#include "progress/book_identity.h"
+#include "progress/progress_store.h"
 
 #define TEST_DOCUMENT "e1a1e9016cfc9bca8c694187943e9c4f"
 #define FOREIGN_DOCUMENT "519220cea448409961e6b3081a36eca3"
@@ -222,6 +227,310 @@ static int parse_progress_value(const char *text, int *value)
         return 0;
     *value = (int)parsed;
     return 1;
+}
+
+static int parse_local_progress_value(const char *text, int *value)
+{
+    char *end;
+    long parsed;
+    errno = 0;
+    parsed = strtol(text, &end, 10);
+    if (errno || *text == '\0' || *end != '\0' || parsed < -1 ||
+        parsed > 10000)
+        return 0;
+    *value = (int)parsed;
+    return 1;
+}
+
+static int parse_unsigned_value(const char *text, unsigned maximum,
+                                unsigned *value)
+{
+    char *end;
+    unsigned long parsed;
+    errno = 0;
+    parsed = strtoul(text, &end, 10);
+    if (errno || !text[0] || *end || parsed > maximum)
+        return 0;
+    *value = (unsigned)parsed;
+    return 1;
+}
+
+static void secure_clear(void *data, size_t length)
+{
+    volatile unsigned char *p = (volatile unsigned char *)data;
+    while (length--)
+        *p++ = 0;
+}
+
+static int read_credential_line(FILE *file, char *text, size_t cap)
+{
+    size_t length = 0;
+    int c;
+    if (!file || !text || cap < 2)
+        return 0;
+    while ((c = fgetc(file)) != EOF) {
+        if (c == '\n')
+            break;
+        if (c == '\r') {
+            if (fgetc(file) != '\n')
+                return 0;
+            break;
+        }
+        if (length + 1 >= cap)
+            return 0;
+        text[length++] = (char)c;
+    }
+    if (ferror(file) || length == 0)
+        return 0;
+    text[length] = '\0';
+    return length != 0;
+}
+
+static int read_credentials(const char *path,
+                            char username[CN_KOSYNC_USERNAME_MAX + 1],
+                            char userkey[CN_KOSYNC_USERKEY_MAX + 1])
+{
+    FILE *file;
+    file = fopen(path, "rb");
+    if (!file)
+        return 0;
+    if (!read_credential_line(file, username, CN_KOSYNC_USERNAME_MAX + 1) ||
+        !read_credential_line(file, userkey, CN_KOSYNC_USERKEY_MAX + 1) ||
+        fgetc(file) != EOF) {
+        fclose(file);
+        return 0;
+    }
+    if (fclose(file) != 0)
+        return 0;
+    return 1;
+}
+
+static void print_diagnostic_text(const char *text)
+{
+    const unsigned char *p = (const unsigned char *)text;
+    while (*p) {
+        if (*p == '\n')
+            fputs("\\n", stdout);
+        else if (*p == '\r')
+            fputs("\\r", stdout);
+        else if (*p == '\t')
+            fputs("\\t", stdout);
+        else if (*p == '\\')
+            fputs("\\\\", stdout);
+        else if (*p < 0x20 || *p == 0x7f)
+            printf("\\x%02x", (unsigned)*p);
+        else
+            fputc(*p, stdout);
+        ++p;
+    }
+}
+
+static int run_local_set(int argc, char **argv)
+{
+    cn_progress_store *store = NULL;
+    cn_progress_record record;
+    cn_book_identity identity;
+    cn_progress_result result;
+    int progress;
+    size_t length;
+    if (argc != 6 || !parse_local_progress_value(argv[5], &progress) ||
+        cn_book_identity_from_path(&identity, argv[3]) != 0)
+        return 2;
+    result = cn_progress_store_open(&store, argv[2]);
+    if (result != CN_PROGRESS_OK)
+        return 1;
+    cn_progress_record_init(&record);
+    length = strlen(argv[4]);
+    record.position.location = (char *)malloc(length + 1);
+    if (!record.position.location) {
+        cn_progress_store_close(store);
+        return 1;
+    }
+    memcpy(record.position.location, argv[4], length + 1);
+    record.position.progress_10000 = progress;
+    result = cn_progress_store_save(store, &identity, &record);
+    cn_progress_record_clear(&record);
+    cn_progress_store_close(store);
+    if (result != CN_PROGRESS_OK) {
+        fprintf(stderr, "KOSYNC LOCAL SET FAIL %s\n",
+                cn_progress_result_name(result));
+        return 1;
+    }
+    printf("KOSYNC LOCAL SET progress=%d position=", progress);
+    print_diagnostic_text(argv[4]);
+    puts(" OK");
+    return 0;
+}
+
+static int run_local_get(int argc, char **argv)
+{
+    cn_progress_store *store = NULL;
+    cn_progress_record record;
+    cn_book_identity identity;
+    cn_progress_result result;
+    if (argc != 4 || cn_book_identity_from_path(&identity, argv[3]) != 0)
+        return 2;
+    result = cn_progress_store_open(&store, argv[2]);
+    if (result != CN_PROGRESS_OK)
+        return 1;
+    cn_progress_record_init(&record);
+    result = cn_progress_store_load(store, &identity, &record);
+    if (result == CN_PROGRESS_OK)
+        printf("KOSYNC LOCAL GET progress=%d position=",
+               record.position.progress_10000);
+    if (result == CN_PROGRESS_OK) {
+        print_diagnostic_text(record.position.location);
+        puts(" OK");
+    } else {
+        fprintf(stderr, "KOSYNC LOCAL GET FAIL %s\n",
+                cn_progress_result_name(result));
+    }
+    cn_progress_record_clear(&record);
+    cn_progress_store_close(store);
+    return result == CN_PROGRESS_OK ? 0 : 1;
+}
+
+static int run_sync_once(int argc, char **argv)
+{
+    cn_progress_store *store = NULL;
+    cn_kosync_client client;
+    cn_kosync_sync_config config;
+    cn_kosync_sync_result sync_result;
+    cn_tls_config tls;
+    cn_dns_config dns;
+    cn_time_config time_config;
+    cn_progress_result open_result;
+    cn_kosync_sync_status status;
+    const char *document_text;
+    char username[CN_KOSYNC_USERNAME_MAX + 1] = {0};
+    char userkey[CN_KOSYNC_USERKEY_MAX + 1] = {0};
+    unsigned dns_port;
+    unsigned dns_ms;
+    unsigned sntp_port;
+    unsigned sntp_ms;
+    unsigned recv_ms;
+    char *end;
+    long long epoch;
+
+    if (argc != 18 ||
+        !parse_unsigned_value(argv[5], 65535, &dns_port) || dns_port == 0 ||
+        !parse_unsigned_value(argv[6], 60000, &dns_ms) || dns_ms == 0 ||
+        !parse_unsigned_value(argv[9], 65535, &sntp_port) || sntp_port == 0 ||
+        !parse_unsigned_value(argv[10], 60000, &sntp_ms) || sntp_ms == 0 ||
+        !parse_unsigned_value(argv[17], 60000, &recv_ms) || recv_ms == 0 ||
+        !read_credentials(argv[13], username, userkey)) {
+        secure_clear(username, sizeof username);
+        secure_clear(userkey, sizeof userkey);
+        return 2;
+    }
+    if (!init_client(&client, argv[11], username, userkey)) {
+        secure_clear(username, sizeof username);
+        secure_clear(userkey, sizeof userkey);
+        secure_clear(&client, sizeof client);
+        return 1;
+    }
+    client.recv_ms = recv_ms;
+    if (!client.use_tls) {
+        fprintf(stderr, "KOSYNC SYNC FAIL insecure-http-rejected\n");
+        secure_clear(username, sizeof username);
+        secure_clear(userkey, sizeof userkey);
+        secure_clear(&client, sizeof client);
+        return 1;
+    }
+
+    memset(&tls, 0, sizeof tls);
+    tls.ca_path = argv[12];
+    memset(&config, 0, sizeof config);
+    if (strcmp(argv[7], "sync") == 0) {
+        config.time_policy = CN_KOSYNC_SYNC_TIME_ESTABLISH;
+        if (strcmp(argv[16], "-") != 0) {
+            secure_clear(username, sizeof username);
+            secure_clear(userkey, sizeof userkey);
+            secure_clear(&client, sizeof client);
+            return 2;
+        }
+    } else if (strcmp(argv[7], "caller-established") == 0) {
+        config.time_policy = CN_KOSYNC_SYNC_TIME_CALLER_ESTABLISHED;
+        if (strcmp(argv[16], "-") != 0) {
+            errno = 0;
+            epoch = strtoll(argv[16], &end, 10);
+            if (errno || !argv[16][0] || *end || epoch <= 0) {
+                secure_clear(username, sizeof username);
+                secure_clear(userkey, sizeof userkey);
+                secure_clear(&client, sizeof client);
+                return 2;
+            }
+            tls_fixed_now = (time_t)epoch;
+            tls.get_time = tls_fixed_time;
+        }
+    } else {
+        secure_clear(username, sizeof username);
+        secure_clear(userkey, sizeof userkey);
+        secure_clear(&client, sizeof client);
+        return 2;
+    }
+
+    memset(&dns, 0, sizeof dns);
+    dns.servers[0] = argv[4];
+    dns.server_count = 1;
+    dns.port = dns_port;
+    dns.timeout_ms = dns_ms;
+    memset(&time_config, 0, sizeof time_config);
+    time_config.servers[0] = argv[8];
+    time_config.server_count = 1;
+    time_config.port = sntp_port;
+    time_config.timeout_ms = sntp_ms;
+
+    open_result = cn_progress_store_open(&store, argv[2]);
+    if (open_result != CN_PROGRESS_OK) {
+        fprintf(stderr, "KOSYNC SYNC FAIL store=%s\n",
+                cn_progress_result_name(open_result));
+        secure_clear(username, sizeof username);
+        secure_clear(userkey, sizeof userkey);
+        secure_clear(&client, sizeof client);
+        return 1;
+    }
+    config.document_path = argv[3];
+    config.progress_store = store;
+    config.time = &time_config;
+    config.dns = &dns;
+    config.tls = &tls;
+    config.client = &client;
+    config.device = argv[14];
+    config.device_id = argv[15];
+    cn_kosync_sync_result_init(&sync_result);
+    status = cn_kosync_sync_once(&config, &sync_result);
+    document_text = cn_koreader_document_id_text(&sync_result.document_id);
+    printf("KOSYNC SYNC status=%s decision=%s local=%d remote=%d "
+           "saved=%d uploaded=%d document=%s identity=%s load=%s save=%s "
+           "time=%s dns=%s kosync=%s http=%d transport=%s timestamp=%lld "
+           "remote_progress=%d remote_position=",
+           cn_kosync_sync_status_name(status),
+           cn_kosync_sync_decision_name(sync_result.decision),
+           sync_result.local_present, sync_result.remote_present,
+           sync_result.local_saved, sync_result.remote_uploaded,
+           document_text ? document_text : "-",
+           cn_koreader_identity_result_name(sync_result.identity_result),
+           cn_progress_result_name(sync_result.local_load_result),
+           cn_progress_result_name(sync_result.local_save_result),
+           cn_timesimple_result_name(sync_result.time_result),
+           cn_dnssimple_result_name(sync_result.dns_result),
+           cn_kosync_result_name(sync_result.kosync_result),
+           sync_result.kosync_outcome.http_status,
+           cn_netsimple_result_name(sync_result.kosync_outcome.transport_result),
+           sync_result.has_put_timestamp ? sync_result.put_timestamp : -1,
+           sync_result.remote_present
+               ? sync_result.remote_progress.progress_10000 : -1);
+    print_diagnostic_text(sync_result.remote_present
+                              ? sync_result.remote_progress.logical_position
+                              : "-");
+    fputc('\n', stdout);
+    cn_kosync_sync_result_clear(&sync_result);
+    cn_progress_store_close(store);
+    secure_clear(username, sizeof username);
+    secure_clear(userkey, sizeof userkey);
+    secure_clear(&client, sizeof client);
+    return status == CN_KOSYNC_SYNC_STATUS_OK ? 0 : 1;
 }
 
 static int run_put(int argc, char **argv)
@@ -462,7 +771,10 @@ static void usage(void)
         "       crossnook-kosync-test --get <url> <user> <key> <doc>\n"
         "       crossnook-kosync-test --roundtrip <url> <user> <key> <doc1> <doc2>\n");
     fprintf(stderr,
-        "       crossnook-kosync-test --roundtrip-https <url> <connect-host> <ca> <user> <key> <doc1> <doc2> [epoch]\n");
+        "       crossnook-kosync-test --roundtrip-https <url> <connect-host> <ca> <user> <key> <doc1> <doc2> [epoch]\n"
+        "       crossnook-kosync-test --local-set <state-dir> <epub> <position> <-1..10000>\n"
+        "       crossnook-kosync-test --local-get <state-dir> <epub>\n"
+        "       crossnook-kosync-test --sync-once <state-dir> <epub> <dns-server> <dns-port> <dns-ms> <sync|caller-established> <sntp-server> <sntp-port> <sntp-ms> <https-url> <ca> <credential-file> <device> <device-id> <epoch|-> <recv-ms>\n");
 }
 
 int main(int argc, char **argv)
@@ -481,6 +793,12 @@ int main(int argc, char **argv)
         return run_roundtrip(argc, argv);
     if (argc > 1 && strcmp(argv[1], "--roundtrip-https") == 0)
         return run_roundtrip_https(argc, argv);
+    if (argc > 1 && strcmp(argv[1], "--local-set") == 0)
+        return run_local_set(argc, argv);
+    if (argc > 1 && strcmp(argv[1], "--local-get") == 0)
+        return run_local_get(argc, argv);
+    if (argc > 1 && strcmp(argv[1], "--sync-once") == 0)
+        return run_sync_once(argc, argv);
     usage();
     return 2;
 }

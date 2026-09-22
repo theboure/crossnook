@@ -12,7 +12,8 @@ from kosync_mock_server import KOSyncHandler, MockServer
 class HTTPSHandler(KOSyncHandler):
     def do_GET(self):
         if self.server.host_log:
-            with open(self.server.host_log, "a", encoding="ascii") as output:
+            with open(self.server.host_log, "a", encoding="ascii",
+                      newline="\n") as output:
                 output.write((self.headers.get("Host") or "<none>") + "\n")
         if self.path == "/https/get":
             self.send_bytes(b"hello over verified TLS")
@@ -79,8 +80,11 @@ class HTTPSHandler(KOSyncHandler):
 
 
 class HTTPSMockServer(MockServer):
-    def __init__(self, address, timestamp_start, quiet, stall_seconds, host_log):
-        super().__init__(address, timestamp_start, quiet)
+    def __init__(self, address, timestamp_start, quiet, stall_seconds, host_log,
+                 integration_fixtures=False, transcript=None,
+                 kosync_stall_seconds=2.0):
+        super().__init__(address, timestamp_start, quiet, integration_fixtures,
+                         transcript, kosync_stall_seconds)
         self.RequestHandlerClass = HTTPSHandler
         self.stall_seconds = stall_seconds
         self.host_log = host_log
@@ -113,6 +117,9 @@ def main():
     parser.add_argument("--host-log")
     parser.add_argument("--timestamp-start", type=int, default=1_700_000_000)
     parser.add_argument("--stall-seconds", type=float, default=2.0)
+    parser.add_argument("--kosync-stall-seconds", type=float, default=2.0)
+    parser.add_argument("--integration-fixtures", action="store_true")
+    parser.add_argument("--transcript")
     parser.add_argument("--mode",
                         choices=("tls", "plain", "handshake-stall"),
                         default="tls")
@@ -126,7 +133,9 @@ def main():
         parser.error("--cert and --key are required in tls mode")
 
     server = HTTPSMockServer((args.host, args.port), args.timestamp_start,
-                             args.quiet, args.stall_seconds, args.host_log)
+                             args.quiet, args.stall_seconds, args.host_log,
+                             args.integration_fixtures, args.transcript,
+                             args.kosync_stall_seconds)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.maximum_version = ssl.TLSVersion.TLSv1_2
@@ -135,7 +144,8 @@ def main():
 
     def record_sni(_socket, server_name, _context):
         if args.sni_log:
-            with open(args.sni_log, "a", encoding="ascii") as output:
+            with open(args.sni_log, "a", encoding="ascii",
+                      newline="\n") as output:
                 output.write((server_name or "<none>") + "\n")
 
     context.set_servername_callback(record_sni)

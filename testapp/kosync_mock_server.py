@@ -6,6 +6,7 @@ import http.client
 import json
 import re
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -22,14 +23,51 @@ FAULT_MALFORMED = "00000000000000000000000000000001"
 FAULT_PROTOCOL = "00000000000000000000000000000002"
 FAULT_OVERSIZED = "00000000000000000000000000000003"
 FAULT_SERVER = "00000000000000000000000000000004"
+TEST_DOCUMENT = "e1a1e9016cfc9bca8c694187943e9c4f"
+POSITION_ONE = "/body/DocFragment[1]/body/p[1]/text().0"
+POSITION_TWO = "/body/DocFragment[1]/body/p[3]/text().5"
+INTEGRATION_USERS = (
+    "integration-local-only",
+    "integration-remote-only",
+    "integration-both-missing",
+    "integration-same",
+    "integration-same-percentage-different",
+    "integration-different-same-percentage",
+    "integration-different",
+    "integration-unsupported",
+    "integration-auth",
+    "integration-malformed",
+    "integration-timeout",
+)
 
 
 class Store:
-    def __init__(self, timestamp_start):
+    def __init__(self, timestamp_start, integration_fixtures=False):
         self.users = {TEST_USER: TEST_KEY, OTHER_USER: OTHER_KEY}
+        self.users.update({username: TEST_KEY for username in INTEGRATION_USERS})
         self.progress = {}
         self.next_timestamp = timestamp_start
         self.lock = threading.Lock()
+        if integration_fixtures:
+            self.seed_integration(timestamp_start)
+
+    def seed_integration(self, timestamp):
+        fixtures = {
+            "integration-remote-only": (POSITION_TWO, 0.6543),
+            "integration-same": (POSITION_ONE, 0.321),
+            "integration-same-percentage-different": (POSITION_ONE, 0.9999),
+            "integration-different-same-percentage": (POSITION_TWO, 0.321),
+            "integration-different": (POSITION_TWO, 0.6543),
+        }
+        for username, (position, percentage) in fixtures.items():
+            self.progress[(username, TEST_DOCUMENT)] = {
+                "document": TEST_DOCUMENT,
+                "progress": position,
+                "percentage": percentage,
+                "device": "remote-test-device",
+                "device_id": "remote-test-device-id",
+                "timestamp": timestamp,
+            }
 
     def put(self, username, record):
         with self.lock:
@@ -67,6 +105,8 @@ class KOSyncHandler(BaseHTTPRequestHandler):
         key = self.headers.get("x-auth-key")
         if username and self.server.store.users.get(username) == key:
             return username
+        self.server.record_event({"method": self.command, "username": username,
+                                  "authenticated": False})
         self.send_json(401, {"code": 2001, "message": "Unauthorized"})
         return None
 
@@ -87,6 +127,19 @@ class KOSyncHandler(BaseHTTPRequestHandler):
         if username is None:
             return
         document = self.path[len(prefix):]
+        self.server.record_event({"method": "GET", "username": username,
+                                  "document": document})
+        if username == "integration-timeout":
+            time.sleep(self.server.kosync_stall_seconds)
+            return
+        if username == "integration-malformed":
+            body = b'{"document":'
+            self.send_response(200)
+            self.send_header("Content-Type", ACCEPT)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if document == FAULT_SERVER:
             self.send_json(500, {"code": 2000, "message": "Injected error"})
             return
@@ -143,6 +196,13 @@ class KOSyncHandler(BaseHTTPRequestHandler):
         if not self.valid_progress(request):
             self.send_json(403, {"code": 2003, "message": "Invalid request"})
             return
+        self.server.record_event({
+            "method": "PUT",
+            "username": username,
+            "document": request["document"],
+            "progress": request["progress"],
+            "percentage": request["percentage"],
+        })
         timestamp = self.server.store.put(username, request)
         self.send_json(200, {"document": request["document"],
                              "timestamp": timestamp})
@@ -169,10 +229,24 @@ class KOSyncHandler(BaseHTTPRequestHandler):
 class MockServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, timestamp_start, quiet=False):
+    def __init__(self, address, timestamp_start, quiet=False,
+                 integration_fixtures=False, transcript=None,
+                 kosync_stall_seconds=2.0):
         super().__init__(address, KOSyncHandler)
-        self.store = Store(timestamp_start)
+        self.store = Store(timestamp_start, integration_fixtures)
         self.quiet = quiet
+        self.transcript = transcript
+        self.transcript_lock = threading.Lock()
+        self.kosync_stall_seconds = kosync_stall_seconds
+
+    def record_event(self, event):
+        if not self.transcript:
+            return
+        line = json.dumps(event, sort_keys=True, separators=(",", ":"))
+        with self.transcript_lock:
+            with open(self.transcript, "a", encoding="utf-8",
+                      newline="\n") as output:
+                output.write(line + "\n")
 
 
 def raw_request(port, method, path, body=None, user=TEST_USER, key=TEST_KEY,
@@ -249,12 +323,17 @@ def main():
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--timestamp-start", type=int, default=1_700_000_000)
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--integration-fixtures", action="store_true")
+    parser.add_argument("--transcript")
+    parser.add_argument("--kosync-stall-seconds", type=float, default=2.0)
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
         self_test()
         return
-    server = MockServer((args.host, args.port), args.timestamp_start, args.quiet)
+    server = MockServer((args.host, args.port), args.timestamp_start, args.quiet,
+                        args.integration_fixtures, args.transcript,
+                        args.kosync_stall_seconds)
     print(f"KOSYNC MOCK listening http://{args.host}:{args.port}", flush=True)
     try:
         server.serve_forever()
