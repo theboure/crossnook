@@ -9,6 +9,7 @@ testapp/crossnook-reader-test
 testapp/crossnook-position-test
 testapp/crossnook-progress-test
 testapp/crossnook-storage-layout-test
+testapp/crossnook-settings-test
 testapp/crossnook-bookid-test
 testapp/crossnook-net-test
 testapp/crossnook-kosync-test
