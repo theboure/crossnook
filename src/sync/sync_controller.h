@@ -6,6 +6,7 @@
 #include "settings/settings_store.h"
 #include "sync/kosync_policy.h"
 #include "sync/kosync_pull.h"
+#include "sync/kosync_push.h"
 
 typedef enum cn_sync_controller_stage {
     CN_SYNC_CONTROLLER_INVALID = 0,
@@ -95,5 +96,46 @@ cn_sync_pull_result cn_sync_pull_remote_current_book(
     const cn_sync_controller_config *config);
 const char *cn_sync_pull_stage_name(cn_sync_pull_stage stage);
 const char *cn_sync_pull_outcome_name(cn_sync_pull_outcome outcome);
+
+/* Separate explicitly authorized "Use local progress"; never normal sync. */
+typedef enum cn_sync_push_stage {
+    CN_SYNC_PUSH_INVALID = 0,
+    CN_SYNC_PUSH_DISABLED,
+    CN_SYNC_PUSH_SETTINGS_FAILED,
+    CN_SYNC_PUSH_CREDENTIALS_FAILED,
+    CN_SYNC_PUSH_CONFIG_FAILED,
+    CN_SYNC_PUSH_EXECUTED
+} cn_sync_push_stage;
+
+typedef enum cn_sync_push_outcome {
+    CN_SYNC_PUSH_INTERNAL_FAILURE = 0,
+    CN_SYNC_PUSH_DISABLED_OUTCOME,
+    CN_SYNC_PUSH_UPLOADED_OUTCOME,
+    CN_SYNC_PUSH_LOCAL_MISSING_OUTCOME,
+    CN_SYNC_PUSH_LOCAL_UNSUPPORTED_OUTCOME,
+    CN_SYNC_PUSH_LOCAL_FAILURE,
+    CN_SYNC_PUSH_AUTH_REQUIRED,
+    CN_SYNC_PUSH_TRUSTED_TIME_UNAVAILABLE,
+    CN_SYNC_PUSH_CONNECTIVITY_FAILURE,
+    CN_SYNC_PUSH_SECURITY_FAILURE,
+    CN_SYNC_PUSH_SERVICE_FAILURE,
+    CN_SYNC_PUSH_CONFIGURATION_FAILURE,
+    CN_SYNC_PUSH_OUTCOME_COUNT
+} cn_sync_push_outcome;
+
+typedef struct cn_sync_push_result {
+    cn_sync_push_stage stage;
+    cn_sync_push_outcome outcome;
+    cn_settings_result settings_result;
+    cn_credential_result credential_result;
+    cn_kosync_push_result push;
+    cn_kosync_mutation_state local_mutation;  /* always NONE */
+    cn_kosync_mutation_state remote_mutation;
+} cn_sync_push_result;
+
+cn_sync_push_result cn_sync_push_local_current_book(
+    const cn_sync_controller_config *config);
+const char *cn_sync_push_stage_name(cn_sync_push_stage stage);
+const char *cn_sync_push_outcome_name(cn_sync_push_outcome outcome);
 
 #endif /* CN_SYNC_SYNC_CONTROLLER_H */
