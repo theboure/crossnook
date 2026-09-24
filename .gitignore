@@ -14,6 +14,7 @@ testapp/crossnook-storage-verify-test
 testapp/crossnook-credentials-test
 testapp/crossnook-sync-controller-test
 testapp/crossnook-reader-sync-test
+testapp/crossnook-remote-pull-test
 testapp/crossnook-bookid-test
 testapp/crossnook-net-test
 testapp/crossnook-kosync-test

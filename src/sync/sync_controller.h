@@ -5,6 +5,7 @@
 #include "credentials/credential_store.h"
 #include "settings/settings_store.h"
 #include "sync/kosync_policy.h"
+#include "sync/kosync_pull.h"
 
 typedef enum cn_sync_controller_stage {
     CN_SYNC_CONTROLLER_INVALID = 0,
@@ -53,5 +54,46 @@ typedef struct cn_sync_controller_result {
 cn_sync_controller_result cn_sync_current_book(
     const cn_sync_controller_config *config);
 const char *cn_sync_controller_stage_name(cn_sync_controller_stage stage);
+
+/* Separately named, destructive LOCAL choice. Never invokes normal sync or
+ * PUT; valid without a runtime device_id because GET does not transmit one. */
+typedef enum cn_sync_pull_stage {
+    CN_SYNC_PULL_INVALID = 0,
+    CN_SYNC_PULL_DISABLED,
+    CN_SYNC_PULL_SETTINGS_FAILED,
+    CN_SYNC_PULL_CREDENTIALS_FAILED,
+    CN_SYNC_PULL_CONFIG_FAILED,
+    CN_SYNC_PULL_EXECUTED
+} cn_sync_pull_stage;
+
+typedef enum cn_sync_pull_outcome {
+    CN_SYNC_PULL_INTERNAL_FAILURE = 0,
+    CN_SYNC_PULL_DISABLED_OUTCOME,
+    CN_SYNC_PULL_REMOTE_MISSING_OUTCOME,
+    CN_SYNC_PULL_PERSISTED_OUTCOME,
+    CN_SYNC_PULL_AUTH_REQUIRED,
+    CN_SYNC_PULL_TRUSTED_TIME_UNAVAILABLE,
+    CN_SYNC_PULL_CONNECTIVITY_FAILURE,
+    CN_SYNC_PULL_SECURITY_FAILURE,
+    CN_SYNC_PULL_SERVICE_FAILURE,
+    CN_SYNC_PULL_LOCAL_FAILURE,
+    CN_SYNC_PULL_CONFIGURATION_FAILURE,
+    CN_SYNC_PULL_OUTCOME_COUNT
+} cn_sync_pull_outcome;
+
+typedef struct cn_sync_pull_result {
+    cn_sync_pull_stage stage;
+    cn_sync_pull_outcome outcome;
+    cn_settings_result settings_result;
+    cn_credential_result credential_result;
+    cn_kosync_pull_result pull;
+    cn_kosync_mutation_state local_mutation;
+    cn_kosync_mutation_state remote_mutation; /* always NONE */
+} cn_sync_pull_result;
+
+cn_sync_pull_result cn_sync_pull_remote_current_book(
+    const cn_sync_controller_config *config);
+const char *cn_sync_pull_stage_name(cn_sync_pull_stage stage);
+const char *cn_sync_pull_outcome_name(cn_sync_pull_outcome outcome);
 
 #endif /* CN_SYNC_SYNC_CONTROLLER_H */
