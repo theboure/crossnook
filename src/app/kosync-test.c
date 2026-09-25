@@ -1088,6 +1088,12 @@ static int run_mock_smoke(const char *url)
     if (!init_client(&client, url, TEST_USER, TEST_KEY) ||
         !init_client(&wrong, url, TEST_USER, "wrong-key"))
         return 1;
+    check(cn_kosync_authorize(&client, &outcome) == CN_KOSYNC_OK &&
+              outcome.http_status == 200,
+          "read-only /users/auth accepts valid credentials", &failures);
+    check(cn_kosync_authorize(&wrong, &outcome) == CN_KOSYNC_AUTH_FAILED &&
+              outcome.http_status == 401,
+          "read-only /users/auth rejects invalid credentials", &failures);
     cn_kosync_progress_init(&progress);
     check(cn_kosync_get_progress(&client, FOREIGN_DOCUMENT, &progress, NULL) ==
               CN_KOSYNC_NOT_FOUND,

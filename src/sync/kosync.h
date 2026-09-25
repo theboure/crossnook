@@ -84,6 +84,10 @@ cn_kosync_result cn_kosync_client_set_tls(
     cn_kosync_client *client, const struct cn_tls_config *tls,
     const char *connect_host);
 
+/* Read-only account authorization; does not access document progress. */
+cn_kosync_result cn_kosync_authorize(const cn_kosync_client *client,
+                                     cn_kosync_outcome *outcome);
+
 cn_kosync_result cn_kosync_serialize_progress(
     const cn_kosync_progress *progress,
     char *json, size_t json_cap, size_t *json_len);

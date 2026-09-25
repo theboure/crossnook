@@ -106,7 +106,8 @@ class KOSyncHandler(BaseHTTPRequestHandler):
         key = self.headers.get("x-auth-key")
         if username and self.server.store.users.get(username) == key:
             return username
-        self.server.record_event({"method": self.command, "username": username,
+        self.server.record_event({"method": self.command,
+                                  "endpoint": "auth",
                                   "authenticated": False})
         self.send_json(401, {"code": 2001, "message": "Unauthorized"})
         return None
@@ -119,6 +120,14 @@ class KOSyncHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if not self.protocol_headers_ok():
+            return
+        if self.path == "/users/auth":
+            username = self.authenticated_user()
+            if username is None:
+                return
+            self.server.record_event({"method": "GET", "endpoint": "auth",
+                                      "authenticated": True})
+            self.send_json(200, {"authorized": "OK"})
             return
         prefix = "/syncs/progress/"
         if not self.path.startswith(prefix):
@@ -290,6 +299,10 @@ def self_test():
         "device_id": "crossnook-test-device-id",
     }
     try:
+        status, payload = raw_request(port, "GET", "/users/auth")
+        assert status == 200 and json.loads(payload)["authorized"] == "OK"
+        assert raw_request(port, "GET", "/users/auth", user=TEST_USER,
+                           key="wrong")[0] == 401
         status, payload = raw_request(port, "GET", f"/syncs/progress/{document}")
         assert status == 200 and json.loads(payload) == {}
         assert raw_request(port, "PUT", "/syncs/progress", b"{")[0] == 403

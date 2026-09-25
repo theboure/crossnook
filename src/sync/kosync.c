@@ -805,6 +805,44 @@ static void init_outcome(cn_kosync_outcome *outcome)
     outcome->transport_result = CN_NETSIMPLE_INVALID;
 }
 
+cn_kosync_result cn_kosync_authorize(const cn_kosync_client *client,
+                                     cn_kosync_outcome *outcome)
+{
+    cn_netsimple_header headers[3];
+    cn_netsimple_request request;
+    cn_netsimple_response response;
+    cn_netsimple_result transport;
+    cn_kosync_result result;
+    char path[CN_NETSIMPLE_PATH_MAX + 1];
+    char *buffer;
+
+    init_outcome(outcome);
+    if (!client || (client->use_tls && !client->tls))
+        return CN_KOSYNC_INVALID;
+    result = endpoint_path(client, "/users/auth", path, sizeof path);
+    if (result != CN_KOSYNC_OK)
+        return result;
+    buffer = (char *)malloc(CN_NETSIMPLE_RESPONSE_MAX);
+    if (!buffer)
+        return CN_KOSYNC_NO_MEMORY;
+    headers[0].name = "Accept"; headers[0].value = KOSYNC_ACCEPT;
+    headers[1].name = "x-auth-user"; headers[1].value = client->username;
+    headers[2].name = "x-auth-key"; headers[2].value = client->userkey;
+    memset(&request, 0, sizeof request);
+    request.method = CN_NETSIMPLE_METHOD_GET;
+    request.host = client->host; request.port = client->port;
+    request.connect_host = client->connect_host[0] ? client->connect_host : NULL;
+    request.path = path; request.headers = headers; request.header_count = 3;
+    request.tls = client->use_tls ? client->tls : NULL;
+    transport = cn_netsimple_exchange(&request, buffer,
+                                      CN_NETSIMPLE_RESPONSE_MAX,
+                                      client->connect_ms, client->recv_ms,
+                                      &response);
+    result = map_response(transport, &response, outcome);
+    free(buffer);
+    return result;
+}
+
 cn_kosync_result cn_kosync_put_progress(const cn_kosync_client *client,
                                         const cn_kosync_progress *progress,
                                         long long *server_timestamp,
