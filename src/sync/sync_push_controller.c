@@ -1,7 +1,7 @@
 /* Explicit persisted-local-wins controller; published normal sync untouched. */
 #include <string.h>
 
-#include "sync/sync_controller.h"
+#include "sync/sync_controller_internal.h"
 
 static void clear_bytes(void *data, size_t length)
 {
@@ -9,16 +9,15 @@ static void clear_bytes(void *data, size_t length)
     while (length--) *p++ = 0;
 }
 
-static cn_sync_push_result initial_result(void)
+void cn_sync_push_result_init_internal(cn_sync_push_result *result)
 {
-    cn_sync_push_result result;
-    memset(&result, 0, sizeof result);
-    result.stage = CN_SYNC_PUSH_INVALID;
-    result.outcome = CN_SYNC_PUSH_INTERNAL_FAILURE;
-    result.settings_result = CN_SETTINGS_INVALID_ARGUMENT;
-    result.credential_result = CN_CREDENTIAL_INVALID;
-    cn_kosync_push_result_init(&result.push);
-    return result;
+    if (!result) return;
+    memset(result, 0, sizeof *result);
+    result->stage = CN_SYNC_PUSH_INVALID;
+    result->outcome = CN_SYNC_PUSH_INTERNAL_FAILURE;
+    result->settings_result = CN_SETTINGS_INVALID_ARGUMENT;
+    result->credential_result = CN_CREDENTIAL_INVALID;
+    cn_kosync_push_result_init(&result->push);
 }
 
 static cn_sync_push_outcome dns_failure(cn_dns_result code)
@@ -93,16 +92,61 @@ static cn_sync_push_outcome classify_push(const cn_kosync_push_result *push)
     }
 }
 
-cn_sync_push_result cn_sync_push_local_current_book(
-    const cn_sync_controller_config *config)
+void cn_sync_push_local_current_book_resolved(
+    const cn_sync_resolved_config *config,
+    cn_sync_push_result *output)
 {
-    cn_sync_push_result output = initial_result();
-    cn_settings settings;
-    cn_credentials credentials;
     cn_kosync_client client;
     cn_kosync_push_config push_config;
     cn_kosync_result client_result;
 
+    if (!output) return;
+    if (!config || !config->progress_store || !config->document_path ||
+        !config->document_path[0] || !config->device_id ||
+        !config->dns || !config->tls || !config->tls->ca_path ||
+        (config->time_policy != CN_KOSYNC_SYNC_TIME_ESTABLISH &&
+         config->time_policy != CN_KOSYNC_SYNC_TIME_CALLER_ESTABLISHED) ||
+        (config->time_policy == CN_KOSYNC_SYNC_TIME_ESTABLISH &&
+         (!config->time || config->tls->get_time))) {
+        output->stage = CN_SYNC_PUSH_CONFIG_FAILED;
+        output->outcome = CN_SYNC_PUSH_CONFIGURATION_FAILURE;
+        return;
+    }
+    memset(&client, 0, sizeof client);
+    client_result = cn_kosync_client_init(&client, config->base_url,
+                                          config->username, config->userkey);
+    if (client_result != CN_KOSYNC_OK || !client.use_tls) {
+        output->stage = CN_SYNC_PUSH_CONFIG_FAILED;
+        output->outcome = CN_SYNC_PUSH_CONFIGURATION_FAILURE;
+        clear_bytes(&client, sizeof client);
+        return;
+    }
+    memset(&push_config, 0, sizeof push_config);
+    push_config.document_path = config->document_path;
+    push_config.progress_store = config->progress_store;
+    push_config.time_policy = config->time_policy;
+    push_config.time = config->time;
+    push_config.dns = config->dns;
+    push_config.tls = config->tls;
+    push_config.client = &client;
+    push_config.device = config->device_name;
+    push_config.device_id = config->device_id;
+    (void)cn_kosync_push_local_once(&push_config, &output->push);
+    output->stage = CN_SYNC_PUSH_EXECUTED;
+    output->outcome = classify_push(&output->push);
+    output->remote_mutation = output->push.remote_mutation;
+    clear_bytes(&client, sizeof client);
+}
+
+cn_sync_push_result cn_sync_push_local_current_book(
+    const cn_sync_controller_config *config)
+{
+    cn_sync_push_result output;
+    cn_settings settings;
+    cn_credentials credentials;
+    cn_sync_resolved_config resolved;
+
+    cn_sync_push_result_init_internal(&output);
     if (!config || !config->settings_store) return output;
     output.settings_result = cn_settings_load(config->settings_store,
                                                &settings, NULL);
@@ -124,7 +168,6 @@ cn_sync_push_result cn_sync_push_local_current_book(
         return output;
     }
     memset(&credentials, 0, sizeof credentials);
-    memset(&client, 0, sizeof client);
     output.credential_result = cn_credential_store_load(
         config->credential_store, &credentials, NULL);
     if (output.credential_result != CN_CREDENTIAL_OK) {
@@ -136,45 +179,28 @@ cn_sync_push_result cn_sync_push_local_current_book(
                                output.credential_result == CN_CREDENTIAL_INVALID
                                    ? CN_SYNC_PUSH_CONFIGURATION_FAILURE
                                    : CN_SYNC_PUSH_LOCAL_FAILURE;
-        goto done;
+        cn_credentials_clear(&credentials);
+        return output;
     }
-    if (cn_settings_validate(&settings) != CN_SETTINGS_OK ||
-        !config->progress_store || !config->document_path ||
-        !config->document_path[0] || !config->device_id ||
-        !config->dns || !config->tls || !config->tls->ca_path ||
-        (config->time_policy != CN_KOSYNC_SYNC_TIME_ESTABLISH &&
-         config->time_policy != CN_KOSYNC_SYNC_TIME_CALLER_ESTABLISHED) ||
-        (config->time_policy == CN_KOSYNC_SYNC_TIME_ESTABLISH &&
-         (!config->time || config->tls->get_time))) {
+    if (cn_settings_validate(&settings) != CN_SETTINGS_OK) {
         output.stage = CN_SYNC_PUSH_CONFIG_FAILED;
         output.outcome = CN_SYNC_PUSH_CONFIGURATION_FAILURE;
-        goto done;
+    } else {
+        memset(&resolved, 0, sizeof resolved);
+        resolved.base_url = settings.kosync_base_url;
+        resolved.device_name = settings.kosync_device_name;
+        resolved.username = credentials.username;
+        resolved.userkey = credentials.userkey;
+        resolved.device_id = config->device_id;
+        resolved.progress_store = config->progress_store;
+        resolved.document_path = config->document_path;
+        resolved.dns = config->dns;
+        resolved.tls = config->tls;
+        resolved.time_policy = config->time_policy;
+        resolved.time = config->time;
+        cn_sync_push_local_current_book_resolved(&resolved, &output);
     }
-    client_result = cn_kosync_client_init(&client, settings.kosync_base_url,
-                                           credentials.username,
-                                           credentials.userkey);
-    if (client_result != CN_KOSYNC_OK || !client.use_tls) {
-        output.stage = CN_SYNC_PUSH_CONFIG_FAILED;
-        output.outcome = CN_SYNC_PUSH_CONFIGURATION_FAILURE;
-        goto done;
-    }
-    memset(&push_config, 0, sizeof push_config);
-    push_config.document_path = config->document_path;
-    push_config.progress_store = config->progress_store;
-    push_config.time_policy = config->time_policy;
-    push_config.time = config->time;
-    push_config.dns = config->dns;
-    push_config.tls = config->tls;
-    push_config.client = &client;
-    push_config.device = settings.kosync_device_name;
-    push_config.device_id = config->device_id;
-    (void)cn_kosync_push_local_once(&push_config, &output.push);
-    output.stage = CN_SYNC_PUSH_EXECUTED;
-    output.outcome = classify_push(&output.push);
-    output.remote_mutation = output.push.remote_mutation;
-done:
     cn_credentials_clear(&credentials);
-    clear_bytes(&client, sizeof client);
     return output;
 }
 
