@@ -429,6 +429,27 @@ cn_device_identity_result cn_device_identity_load_or_create(
     return result;
 }
 
+cn_device_identity_result cn_device_identity_load(
+    const cn_device_identity_store *store, char *output, size_t output_capacity,
+    int *system_errno)
+{
+    cn_device_identity_result result;
+    int local_errno = 0;
+    int *error_out = system_errno ? system_errno : &local_errno;
+
+    set_errno_out(error_out, 0);
+    if (output && output_capacity > 0)
+        output[0] = '\0';
+    if (!store || !output)
+        return CN_DEVICE_ID_INVALID_ARGUMENT;
+    if (output_capacity < CN_DEVICE_ID_TEXT_CAPACITY)
+        return CN_DEVICE_ID_BUFFER_TOO_SMALL;
+    if (!store_valid(store))
+        return CN_DEVICE_ID_INVALID_ARGUMENT;
+    result = read_existing(store, output, error_out);
+    return result;
+}
+
 const char *cn_device_identity_result_name(cn_device_identity_result result)
 {
     static const char *const names[CN_DEVICE_ID_RESULT_COUNT] = {

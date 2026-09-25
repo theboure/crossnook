@@ -58,6 +58,13 @@ cn_device_identity_result cn_device_identity_load_or_create(
     size_t output_capacity,
     int *system_errno);
 
+/* Loads an existing identity without entropy, creation, or rewrite. */
+cn_device_identity_result cn_device_identity_load(
+    const cn_device_identity_store *store,
+    char *output,
+    size_t output_capacity,
+    int *system_errno);
+
 const char *cn_device_identity_result_name(cn_device_identity_result result);
 
 #endif /* CN_IDENTITY_DEVICE_IDENTITY_H */

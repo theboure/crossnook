@@ -19,6 +19,7 @@ testapp/crossnook-local-push-test
 testapp/crossnook-sync-conflict-ui-test
 testapp/crossnook-device-identity-test
 testapp/crossnook-account-bootstrap-test
+testapp/crossnook-persisted-sync-profile-test
 testapp/crossnook-bookid-test
 testapp/crossnook-net-test
 testapp/crossnook-kosync-test
