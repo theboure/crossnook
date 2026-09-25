@@ -44,7 +44,8 @@ INTEGRATION_USERS = (
 
 class Store:
     def __init__(self, timestamp_start, integration_fixtures=False):
-        self.users = {TEST_USER: TEST_KEY, OTHER_USER: OTHER_KEY}
+        self.users = {TEST_USER: TEST_KEY, OTHER_USER: OTHER_KEY,
+                      "activation-synthetic-user": "activation-synthetic-key"}
         self.users.update({username: TEST_KEY for username in INTEGRATION_USERS})
         self.progress = {}
         self.next_timestamp = timestamp_start
