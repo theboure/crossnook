@@ -71,6 +71,39 @@ unchanged):
 Re-validated host-side (`build-text.sh` + `validate-text.py` all green),
 deploy repeated.
 
+## Post-tag layout-correction visual revalidation (2026-09-25)
+
+The post-tag layout correction was visually revalidated on the physical Nook
+Simple Touch using the current published commit
+`8161ad081af31cef8093f66a6c164bfb0a9095ce`.
+
+Validated inputs:
+
+- `crossnook-text` SHA-256:
+  `4750d503224df2e0b2187217b7c052e5e991af5367f275e3144819b25f941269`;
+- `test-font.ttf` SHA-256:
+  `7da195a74c55bef988d0d48f9508bd5d849425c1770dba5d7bfc6ce9ed848954`.
+
+Target execution reported `crossnook-text: rendered 600x800 to
+/dev/graphics/fb0 (960000 bytes), sleeping`. The framebuffer SHA-256 was
+`d7ae01851d068916e937394337127c37e92f9dba01f8a567b53aa526c8330e13` before
+the visible render and
+`4ba45d9c36a222903b18918dbfffefae0997640891228db3a2a272ec6` while the human
+was observing the rendered text. These hashes are supporting framebuffer
+evidence only; they do not establish visual behavior by themselves.
+
+The human confirmed on the physical panel:
+
+- `CrossNook` and `DejaVu Sans` were visible;
+- the Cyrillic pangram was visible and legible;
+- the 18 / 24 / 32 / 48 px samples were visible;
+- the 48 px sample fit completely on the physical display;
+- the large sample had no right- or bottom-clipping; and
+- the physical E-Ink panel actually repainted.
+
+Therefore: **target execution: PASS; visual physical: PASS; post-tag layout
+correction: visually confirmed.**
+
 ## Encountered during implementation
 
 - FreeType's `configure` needs BOTH a native host compiler (`gcc` +

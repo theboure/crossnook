@@ -1,6 +1,6 @@
 # Sync Conflict Resolution UI Integration
 
-**Status: IMPLEMENTATION COMPLETE; HOST VALIDATION PASS; HARDWARE VALIDATION PENDING.**
+**Status: IMPLEMENTATION COMPLETE; HOST VALIDATION PASS; HARDWARE VALIDATION PASS; VISUAL PHYSICAL MODAL/KEY VALIDATION PASS.**
 
 Normal manual Reader Sync still captures and persists A before normal sync.
 Only its exact `CONTROLLER_COMPLETE` / pre-save OK / integration stage /
@@ -65,11 +65,109 @@ REMOTE PULL HOST VALIDATION OK
 LOCAL PUSH HOST VALIDATION OK
 ```
 
-The focused artifact `testapp/crossnook-sync-conflict-ui-test` is static
-ARMv5TE EABI5 soft-float, non-PIE; SHA-256
-`df69d7d99436b4726353daaabef49f35aa15db464f6d4b1bcdc19e2744931970`.
+The final physically validated artifact `testapp/crossnook-sync-conflict-ui-test`
+is static ARMv5TE EABI5 soft-float, non-PIE; SHA-256
+`d582038eccb45ac4434201392ffabc509667b07b002c947131429fa01503f347`.
 
-## Later Nook physical gate (not executed in this pass)
+## Nook physical and visual validation results (completed 2026-09-25)
+
+Hardware validation: **PASS**. Visual physical modal/key validation: **PASS**.
+
+The completed physical validation used only synthetic credentials and the
+controlled test environment. The initial unmounted gate failed closed:
+
+```text
+CARD_NOT_MOUNTED
+SYNC CONFLICT GATE storage=unverified persistence=not-attempted network=not-attempted
+REMOTE_RC=1
+```
+
+The verified external storage was `/dev/block/mmcblk1` (`179:16`) mounted at
+`/tmp/crossnook-card`, with application root
+`/tmp/crossnook-card/crossnook`:
+
+```text
+STORAGE VERIFY result=ok errno=0 root=/tmp/crossnook-card/crossnook mount=/tmp/crossnook-card device=179:16
+```
+
+The human observed the following on the physical E-Ink panel:
+
+- the modal showed `Sync conflict`, `Use this device`, `Use remote progress`,
+  and `Cancel`;
+- `Cancel` was initially selected;
+- physical NEXT/PREV changed the visible modal selection without turning the
+  underlying Reader page;
+- PREVIOUS visibly moved the selection to `Use remote progress`; and
+- Reader position remained unchanged during modal navigation.
+
+The human selected and confirmed `Cancel`; the diagnostic reported:
+
+```text
+resolution=cancelled
+reader-unchanged=yes
+network=not-attempted
+GET=0
+PUT=0
+```
+
+The human then navigated to `Use this device` and confirmed with MENU. The
+diagnostic reported:
+
+```text
+resolution=local-complete
+local-outcome=uploaded
+remote-outcome=not-attempted
+remote-mutation=confirmed
+put-invoked=1
+get-attempted=0
+local-still-a=yes
+reader-still-a=yes
+mismatch=0
+exit-save=not-attempted
+GET=0
+PUT=1
+```
+
+A separate verification used `GET=1` and `PUT=0` and confirmed that the
+remote matched local A.
+
+Finally, the human navigated to `Use remote progress` and confirmed. The
+diagnostic reported:
+
+```text
+resolution=remote-applied
+local-outcome=not-attempted
+remote-outcome=persisted
+remote-mutation=none
+put-invoked=0
+get-attempted=1
+local-still-a=no
+reader-still-a=no
+redraw-needed=1
+mismatch=0
+exit-save=not-attempted
+reader-matched-persisted=yes
+render=ok
+GET=1
+PUT=0
+```
+
+The human visual confirmation covers the physical conflict modal and
+physical-key navigation for this milestone. It does not establish validation
+of every future or current UI state.
+
+After clean unmount, the final gate again failed closed:
+
+```text
+CARD_NOT_MOUNTED
+SYNC CONFLICT GATE storage=unverified persistence=not-attempted network=not-attempted
+REMOTE_RC=1
+```
+
+No persistence or network operation occurred after unmount, and the sentinel
+remained unchanged throughout.
+
+## Physical validation procedure
 
 The CLI accepts no credential arguments:
 
