@@ -57,6 +57,26 @@ typedef enum cn_ui_state {
 
 typedef struct cn_ui cn_ui;
 
+/* Reader-only, bounded one-shot intent. UI never performs storage/network. */
+typedef enum cn_ui_sync_action {
+    CN_UI_SYNC_NONE = 0,
+    CN_UI_SYNC_MANUAL,
+    CN_UI_SYNC_USE_LOCAL,
+    CN_UI_SYNC_USE_REMOTE,
+    CN_UI_SYNC_CANCEL
+} cn_ui_sync_action;
+
+typedef enum cn_ui_sync_feedback {
+    CN_UI_SYNC_FEEDBACK_WORKING = 0,
+    CN_UI_SYNC_FEEDBACK_REMOTE_UPDATED,
+    CN_UI_SYNC_FEEDBACK_REMOTE_APPLIED,
+    CN_UI_SYNC_FEEDBACK_REMOTE_MISSING,
+    CN_UI_SYNC_FEEDBACK_UPLOAD_POSSIBLE,
+    CN_UI_SYNC_FEEDBACK_STALE,
+    CN_UI_SYNC_FEEDBACK_MISMATCH,
+    CN_UI_SYNC_FEEDBACK_FAILED
+} cn_ui_sync_feedback;
+
 cn_ui *cn_ui_init(void);
 void   cn_ui_free(cn_ui *ui);
 
@@ -81,6 +101,16 @@ int cn_ui_reader_page(const cn_ui *ui);
 int cn_ui_reader_get_position(cn_ui *ui, cn_reader_position *position);
 int cn_ui_reader_goto_position(cn_ui *ui,
                                const cn_reader_position *position);
+
+/* A modal flag, not a new UI state: the real EPUB Reader stays open. The
+ * caller must retain the conflict snapshot. Cancel selection is initially
+ * highlighted; touch only selects, MENU confirms. Result feedback consumes
+ * MENU until dismissed by BACK/HOME. */
+int cn_ui_show_sync_conflict(cn_ui *ui);
+int cn_ui_show_sync_feedback(cn_ui *ui, cn_ui_sync_feedback feedback);
+int cn_ui_sync_modal_active(const cn_ui *ui);
+int cn_ui_sync_selection(const cn_ui *ui); /* 0 local, 1 remote, 2 cancel; -1 otherwise */
+cn_ui_sync_action cn_ui_take_sync_action(cn_ui *ui);
 
 /* Number of rows that fit on the 600x800 library viewport. */
 int cn_ui_lib_rows(void);

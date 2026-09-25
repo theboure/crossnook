@@ -50,6 +50,9 @@
 
 #define MAX_LIB_CP  160 /* max codepoints considered per library row */
 
+#define SYNC_ROW_TOP 278
+#define SYNC_ROW_H 64
+
 static const char *CYR_SAMPLE =
     "\xd0\xa1\xd1\x8a\xd0\xb5\xd1\x88\xd1\x8c "
     "\xd0\xb5\xd1\x89\xd1\x91 "
@@ -73,6 +76,11 @@ struct cn_ui {
     int         top;                /* first visible row index */
 
     cn_reader  *reader;             /* optional EPUB reader (owned) */
+
+    int sync_modal;                  /* 0 none, 1 choices, 2 bounded feedback */
+    int sync_selection;              /* 0 local, 1 remote, 2 cancel */
+    cn_ui_sync_action sync_action;   /* consumed once by application */
+    cn_ui_sync_feedback sync_feedback;
 
     long long   power_press_ms;     /* -1 = power not held */
     int         exit_requested;
@@ -246,6 +254,8 @@ void cn_ui_free(cn_ui *ui)
 int cn_ui_set_library(cn_ui *ui, const cn_library *lib)
 {
     if (ui) {
+        ui->sync_modal = 0;
+        ui->sync_action = CN_UI_SYNC_NONE;
         ui->lib = lib;
         ui->sel = 0;
         ui->top = 0;
@@ -257,6 +267,8 @@ int cn_ui_set_reader(cn_ui *ui, const cn_reader_config *cfg)
 {
     if (!ui)
         return -1;
+    ui->sync_modal = 0;
+    ui->sync_action = CN_UI_SYNC_NONE;
     if (ui->reader) {
         cn_reader_free(ui->reader);
         ui->reader = NULL;
@@ -275,9 +287,94 @@ int cn_ui_lib_rows(void)
     return rows > 0 ? rows : 1;
 }
 
+int cn_ui_show_sync_conflict(cn_ui *ui)
+{
+    if (!ui || ui->state != CN_UI_READER || !ui->reader ||
+        !cn_reader_is_open(ui->reader)) return -1;
+    ui->sync_action = CN_UI_SYNC_NONE;
+    ui->sync_modal = 1;
+    ui->sync_selection = 2;
+    return 0;
+}
+
+int cn_ui_show_sync_feedback(cn_ui *ui, cn_ui_sync_feedback feedback)
+{
+    if (!ui || ui->state != CN_UI_READER || !ui->reader ||
+        !cn_reader_is_open(ui->reader) || feedback < CN_UI_SYNC_FEEDBACK_WORKING ||
+        feedback > CN_UI_SYNC_FEEDBACK_FAILED) return -1;
+    ui->sync_modal = 2;
+    ui->sync_action = CN_UI_SYNC_NONE;
+    ui->sync_feedback = feedback;
+    return 0;
+}
+
+int cn_ui_sync_modal_active(const cn_ui *ui)
+{
+    return ui && ui->sync_modal != 0;
+}
+
+int cn_ui_sync_selection(const cn_ui *ui)
+{
+    return ui && ui->sync_modal == 1 ? ui->sync_selection : -1;
+}
+
+cn_ui_sync_action cn_ui_take_sync_action(cn_ui *ui)
+{
+    cn_ui_sync_action action;
+    if (!ui) return CN_UI_SYNC_NONE;
+    action = ui->sync_action;
+    ui->sync_action = CN_UI_SYNC_NONE;
+    return action;
+}
+
 int cn_ui_handle(cn_ui *ui, const cn_input_ev *ev)
 {
     int redraw = 0;
+
+    if (!ui || !ev) return 0;
+    /* Preserve long-power processing; no other modal input reaches Reader. */
+    if (ui->state == CN_UI_READER && ui->sync_modal &&
+        ev->type != CN_INPUT_POWER_DOWN && ev->type != CN_INPUT_POWER_UP) {
+        if (ev->type == CN_INPUT_BACK || ev->type == CN_INPUT_HOME) {
+            if (ui->sync_modal == 1) ui->sync_action = CN_UI_SYNC_CANCEL;
+            ui->sync_modal = 0;
+            return 1;
+        }
+        if (ui->sync_modal == 2) return 0;
+        if (ev->type == CN_INPUT_PAGE_NEXT && ui->sync_selection < 2) {
+            ++ui->sync_selection;
+            return 1;
+        }
+        if (ev->type == CN_INPUT_PAGE_PREV && ui->sync_selection > 0) {
+            --ui->sync_selection;
+            return 1;
+        }
+        if (ev->type == CN_INPUT_TOUCH_UP && ev->x >= MARGIN_L &&
+            ev->x < CN_READER_W - MARGIN_R && ev->y >= SYNC_ROW_TOP &&
+            ev->y < SYNC_ROW_TOP + 3 * SYNC_ROW_H) {
+            int selected = (ev->y - SYNC_ROW_TOP) / SYNC_ROW_H;
+            if (selected != ui->sync_selection) {
+                ui->sync_selection = selected;
+                return 1;
+            }
+            return 0;
+        }
+        if (ev->type == CN_INPUT_MENU) {
+            ui->sync_action = ui->sync_selection == 0 ? CN_UI_SYNC_USE_LOCAL :
+                              ui->sync_selection == 1 ? CN_UI_SYNC_USE_REMOTE :
+                                                        CN_UI_SYNC_CANCEL;
+            if (ui->sync_action == CN_UI_SYNC_CANCEL) {
+                ui->sync_modal = 0;
+                return 1;
+            }
+            /* Disarm before the app invokes any controller. Repeated MENU
+             * cannot authorize a second request. */
+            ui->sync_modal = 2;
+            ui->sync_feedback = CN_UI_SYNC_FEEDBACK_WORKING;
+            return 1;
+        }
+        return 0;
+    }
 
     switch (ev->type) {
     case CN_INPUT_PAGE_NEXT:
@@ -318,7 +415,9 @@ int cn_ui_handle(cn_ui *ui, const cn_input_ev *ev)
         break;
 
     case CN_INPUT_MENU:
-        break;                       /* reserved */
+        if (ui->state == CN_UI_READER)
+            ui->sync_action = CN_UI_SYNC_MANUAL;
+        break;
 
     case CN_INPUT_BACK:
         if (ui->state == CN_UI_READER) {
@@ -653,8 +752,60 @@ static void render_book(cn_ui *ui, cn_canvas *c, cn_text *t)
     cn_canvas_clear(c, CN_COLOR_WHITE);
 }
 
+static void render_sync_modal(cn_ui *ui, cn_canvas *c, cn_text *t)
+{
+    static const char *const choices[] = {
+        "Use this device", "Use remote progress", "Cancel"
+    };
+    static const char *const feedback[] = {
+        "Working...", "Remote updated", "Remote applied",
+        "Remote progress missing", "Upload may have succeeded; check first",
+        "Position changed; sync again", "Disk/Reader mismatch; save blocked",
+        "Sync choice failed; check and retry manually"
+    };
+    int y, i;
+    cn_canvas_fill_rect(c, MARGIN_L, 176, CN_READER_W - MARGIN_R - 1,
+                        552, CN_COLOR_WHITE);
+    cn_canvas_outline_rect(c, MARGIN_L, 176, CN_READER_W - MARGIN_R - 1,
+                           552, CN_COLOR_BLACK);
+    if (!t) return;
+    (void)cn_text_set_size(t, 24);
+    y = 230;
+    (void)cn_text_render(t, c, ui->sync_modal == 1 ? "Sync conflict" : "Sync result",
+                         &y, MARGIN_L + 16, MARGIN_R + 16,
+                         CN_COLOR_BLACK, CN_COLOR_WHITE);
+    if (ui->sync_modal == 2) {
+        y = 325;
+        (void)cn_text_render(t, c, feedback[ui->sync_feedback], &y,
+                             MARGIN_L + 16, MARGIN_R + 16,
+                             CN_COLOR_BLACK, CN_COLOR_WHITE);
+        y = 490;
+        (void)cn_text_render(t, c, "BACK/HOME: return to Reader", &y,
+                             MARGIN_L + 16, MARGIN_R + 16,
+                             CN_COLOR_BLACK, CN_COLOR_WHITE);
+        return;
+    }
+    for (i = 0; i < 3; ++i) {
+        int top = SYNC_ROW_TOP + i * SYNC_ROW_H;
+        uint16_t bg = ui->sync_selection == i ? CN_COLOR_GRAY : CN_COLOR_WHITE;
+        if (ui->sync_selection == i)
+            cn_canvas_fill_rect(c, MARGIN_L + 8, top,
+                                CN_READER_W - MARGIN_R - 9,
+                                top + SYNC_ROW_H - 2, bg);
+        y = top + 39;
+        (void)cn_text_render(t, c, choices[i], &y, MARGIN_L + 24,
+                             MARGIN_R + 24, CN_COLOR_BLACK, bg);
+    }
+    y = 513;
+    (void)cn_text_set_size(t, 16);
+    (void)cn_text_render(t, c, "NEXT/PREV: select  MENU: confirm  BACK: cancel",
+                         &y, MARGIN_L + 16, MARGIN_R + 16,
+                         CN_COLOR_BLACK, CN_COLOR_WHITE);
+}
+
 void cn_ui_render(cn_ui *ui, cn_canvas *c, cn_text *t)
 {
+    if (!ui || !c) return;
     switch (ui->state) {
     case CN_UI_LIBRARY:        render_library(ui, c, t);         break;
     case CN_UI_SELECTED_BOOK:  render_selected(ui, c, t);        break;
@@ -663,6 +814,8 @@ void cn_ui_render(cn_ui *ui, cn_canvas *c, cn_text *t)
     case CN_UI_HOME:
     default:                   render_home(ui, c, t);            break;
     }
+    if (ui->state == CN_UI_READER && ui->sync_modal)
+        render_sync_modal(ui, c, t);
 }
 
 int cn_ui_exit_requested(const cn_ui *ui)
