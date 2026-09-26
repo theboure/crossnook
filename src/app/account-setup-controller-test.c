@@ -28,6 +28,7 @@ enum save_fault {
 };
 
 static int failures;
+static int physical_mode;
 static enum save_fault settings_fault;
 static enum save_fault credential_fault;
 static cn_device_identity_result identity_create_fault = CN_DEVICE_ID_RESULT_COUNT;
@@ -135,6 +136,8 @@ cn_kosync_userkey_result __wrap_cn_kosync_userkey_from_password(
 cn_time_result __wrap_cn_timesimple_sync(const cn_time_config *config,
                                          cn_time_sample *sample)
 {
+    if (physical_mode)
+        return __real_cn_timesimple_sync(config, sample);
     (void)config;
     if (sample)
         memset(sample, 0, sizeof *sample);
@@ -145,6 +148,8 @@ cn_dns_result __wrap_cn_dnssimple_resolve_a(const cn_dns_config *config,
                                             const char *hostname,
                                             cn_dns_answer *answer)
 {
+    if (physical_mode)
+        return __real_cn_dnssimple_resolve_a(config, hostname, answer);
     (void)config;
     (void)hostname;
     if (fake_dns_result != CN_DNS_OK)
@@ -160,8 +165,9 @@ cn_dns_result __wrap_cn_dnssimple_resolve_a(const cn_dns_config *config,
 cn_kosync_result __wrap_cn_kosync_authorize(const cn_kosync_client *client,
                                             cn_kosync_outcome *outcome)
 {
-    (void)client;
     ++auth_calls;
+    if (physical_mode)
+        return __real_cn_kosync_authorize(client, outcome);
     if (outcome) {
         outcome->http_status = fake_auth_result == CN_KOSYNC_AUTH_FAILED
                                    ? 401 : 200;
@@ -712,6 +718,11 @@ static int physical(int argc, char **argv)
     int rejected_auth;
     int accepted_auth;
     int already_auth;
+    int rejected_progress_get, rejected_progress_put;
+    int accepted_progress_get, accepted_progress_put;
+    int already_progress_get, already_progress_put;
+    int enabled;
+    int sentinel_stable;
     int error = 0;
     unsigned major, minor;
     char *end;
@@ -741,33 +752,44 @@ static int physical(int argc, char **argv)
         cn_storage_layout_prepare(&layout, &error) != CN_STORAGE_OK ||
         !runtime_init(&runtime, &dns, &tls, &time_config))
         return 1;
+    physical_mode = 1;
     dns.servers[0] = argv[6];
     dns.port = (unsigned)strtoul(argv[7], NULL, 10);
     time_config.servers[0] = argv[8];
     time_config.port = (unsigned)strtoul(argv[9], NULL, 10);
     tls.ca_path = argv[11];
     wrong_input = input(argv[10], TEST_DEVICE, TEST_WRONG_PASSWORD);
-    correct_input = input(argv[10], TEST_DEVICE, TEST_PASSWORD);
+    /* Reuse the synthetic account in testapp/kosync_mock_server.py. */
+    correct_input = input(argv[10], TEST_DEVICE, "test-password");
+    wrong_input.username = "test-user";
+    correct_input.username = "test-user";
     mode = argv[12];
     reset_faults();
     fake_auth_result = CN_KOSYNC_AUTH_FAILED;
     rejected = cn_account_setup_submit(
         &layout, &wrong_input, CN_ACCOUNT_SETUP_NEW_OR_RESUME, &runtime);
     rejected_auth = auth_calls;
+    rejected_progress_get = progress_get_calls;
+    rejected_progress_put = progress_put_calls;
     if (strcmp(mode, "accepted") != 0 && strcmp(mode, "rejected") != 0)
         return 2;
     if (strcmp(mode, "rejected") == 0) {
         if (!snapshot(sentinel, sentinel_after, sizeof sentinel_after,
                       &sentinel_after_length))
             return 1;
+        enabled = enabled_setting(&layout);
+        sentinel_stable = sentinel_before_length == sentinel_after_length &&
+                          !memcmp(sentinel_before, sentinel_after,
+                                  sentinel_before_length);
         printf("ACCOUNT SETUP physical rejected=%s auth_get=%d enabled=%d "
                "progress_get=%d progress_put=%d sentinel_stable=%d\n",
                cn_account_setup_status_name(rejected.status), rejected_auth,
-               enabled_setting(&layout), progress_get_calls, progress_put_calls,
-               sentinel_before_length == sentinel_after_length &&
-                   !memcmp(sentinel_before, sentinel_after, sentinel_before_length));
+               enabled, rejected_progress_get, rejected_progress_put,
+               sentinel_stable);
         return rejected.status == CN_ACCOUNT_SETUP_AUTH_REJECTED &&
-                   !enabled_setting(&layout)
+                   rejected.activation.kosync_outcome.http_status == 401 &&
+                   rejected_auth == 1 && !enabled && rejected_progress_get == 0 &&
+                   rejected_progress_put == 0 && sentinel_stable
                    ? 0 : 1;
     }
     reset_faults();
@@ -775,24 +797,39 @@ static int physical(int argc, char **argv)
     accepted = cn_account_setup_submit(
         &layout, &correct_input, CN_ACCOUNT_SETUP_REPLACE_DISABLED, &runtime);
     accepted_auth = auth_calls;
+    accepted_progress_get = progress_get_calls;
+    accepted_progress_put = progress_put_calls;
     reset_faults();
     already = cn_account_setup_activate_existing(&layout, &runtime);
     already_auth = auth_calls;
+    already_progress_get = progress_get_calls;
+    already_progress_put = progress_put_calls;
     if (!snapshot(sentinel, sentinel_after, sizeof sentinel_after,
                   &sentinel_after_length))
         return 1;
+    sentinel_stable = sentinel_before_length == sentinel_after_length &&
+                      !memcmp(sentinel_before, sentinel_after,
+                              sentinel_before_length);
     printf("ACCOUNT SETUP physical rejected=%s accepted=%s already=%s "
            "auth_get=%d already_auth=%d progress_get=%d progress_put=%d "
            "sentinel_stable=%d\n",
            cn_account_setup_status_name(rejected.status),
            cn_account_setup_status_name(accepted.status),
            cn_account_setup_status_name(already.status),
-           rejected_auth + accepted_auth, already_auth, progress_get_calls,
-           progress_put_calls,
-           sentinel_before_length == sentinel_after_length &&
-               !memcmp(sentinel_before, sentinel_after, sentinel_before_length));
+           rejected_auth + accepted_auth, already_auth,
+           rejected_progress_get + accepted_progress_get + already_progress_get,
+           rejected_progress_put + accepted_progress_put + already_progress_put,
+           sentinel_stable);
     return accepted.status == CN_ACCOUNT_SETUP_ACTIVATED &&
-           already.status == CN_ACCOUNT_SETUP_ALREADY_ENABLED ? 0 : 1;
+           already.status == CN_ACCOUNT_SETUP_ALREADY_ENABLED &&
+           rejected.status == CN_ACCOUNT_SETUP_AUTH_REJECTED &&
+           rejected.activation.kosync_outcome.http_status == 401 &&
+           accepted.activation.kosync_outcome.http_status == 200 &&
+           rejected_auth == 1 && accepted_auth == 1 && already_auth == 0 &&
+           rejected_progress_get == 0 && rejected_progress_put == 0 &&
+           accepted_progress_get == 0 && accepted_progress_put == 0 &&
+           already_progress_get == 0 && already_progress_put == 0 &&
+           sentinel_stable ? 0 : 1;
 }
 
 int main(int argc, char **argv)

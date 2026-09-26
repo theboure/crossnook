@@ -101,7 +101,7 @@ device correction, malformed state, bootstrap/identity/activation failures and
 uncertainty, profile-unavailable success, and zero progress operations. Output
 is scanned for synthetic account material.
 
-The proposed guarded physical mode is:
+The guarded physical mode is:
 
 ```text
 /tmp/crossnook-account-setup-controller-test --physical \
@@ -111,11 +111,67 @@ The proposed guarded physical mode is:
 ```
 
 It verifies the supplied external card before preparing or writing the
-disposable root. With controlled DNS/SNTP/HTTPS/KOSync fixtures it exercises
-rejected authentication, explicit correction, accepted activation, and the
-already-enabled fast path while reporting no progress operations. Separate
-clean roots should be used for independent physical cases. Physical validation
-has not been performed by this milestone.
+disposable root. It uses synthetic account input only and never prints account
+material.
+
+### Host and Regression Validation
+
+The focused controller gate and the affected published gates passed:
+
+- `build-account-setup-controller.sh`
+- `build-account-bootstrap.sh`
+- `build-device-identity.sh`
+- `build-sync-activation.sh`
+- `build-persisted-sync-profile.sh`
+
+The controller gate built the ARMv5TE EABI5 soft-float non-PIE diagnostic and
+passed its deterministic QEMU matrix. The matrix covers the local state and
+durability paths described above and confirms zero progress GET/PUT operations.
+
+### Physical Validation
+
+Physical validation was completed on a verified external microSD root and
+passed. The validated ARM diagnostic SHA256 was:
+
+```text
+880d74fe7e1547537fa3060d6eb44944e8c45304d793ee4dff59dfb7a8727994
+```
+
+Before mounting the card, the diagnostic refused before persistence or network
+setup:
+
+```text
+storage=unverified
+persistence=not-attempted
+RC=1
+```
+
+After positive storage verification, one disposable root exercised real SNTP,
+DNS, HTTPS/TLS, and KOSync authorization. The complete flow was:
+
+```text
+wrong synthetic credentials
+  -> AUTH_REJECTED
+  -> REPLACE_DISABLED with correct synthetic credentials
+  -> ACTIVATED
+  -> activate_existing
+  -> ALREADY_ENABLED
+```
+
+The observed real authorization counts were one rejected request with HTTP 401,
+one accepted request with HTTP 200, and zero requests for the already-enabled
+phase. Progress operations were zero in every phase: GET=0 and PUT=0 for
+rejected, accepted, and already-enabled runs. The outside-root sentinel was
+unchanged for the complete mounted validation. The mounted diagnostic returned
+RC=0.
+
+After unmounting the card, the diagnostic again reported unverified storage and
+returned RC=1. No persistence was permitted in that post-unmount run.
+
+The controlled DNS service occasionally lost the first UDP query after a long
+idle period. The complete successful run still exercised the real network path
+and both authorization outcomes; this observation was environmental and was
+not treated as a product or controller failure.
 
 ## Deferred
 
