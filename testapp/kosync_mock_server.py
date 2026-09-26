@@ -42,6 +42,17 @@ INTEGRATION_USERS = (
 )
 
 
+def normalize_base_path(value):
+    if value in (None, "", "/"):
+        return ""
+    if (not value.startswith("/") or value.endswith("/") or
+            "//" in value or "?" in value or "#" in value or
+            any(ord(character) < 0x21 or ord(character) > 0x7e
+                for character in value)):
+        raise ValueError("base path must be a normalized absolute path")
+    return value
+
+
 class Store:
     def __init__(self, timestamp_start, integration_fixtures=False):
         self.users = {TEST_USER: TEST_KEY, OTHER_USER: OTHER_KEY,
@@ -119,10 +130,13 @@ class KOSyncHandler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def endpoint_path(self, suffix):
+        return self.server.base_path + suffix
+
     def do_GET(self):
         if not self.protocol_headers_ok():
             return
-        if self.path == "/users/auth":
+        if self.path == self.endpoint_path("/users/auth"):
             username = self.authenticated_user()
             if username is None:
                 return
@@ -130,7 +144,7 @@ class KOSyncHandler(BaseHTTPRequestHandler):
                                       "authenticated": True})
             self.send_json(200, {"authorized": "OK"})
             return
-        prefix = "/syncs/progress/"
+        prefix = self.endpoint_path("/syncs/progress/")
         if not self.path.startswith(prefix):
             self.send_json(404, {"message": "Not found"})
             return
@@ -182,7 +196,7 @@ class KOSyncHandler(BaseHTTPRequestHandler):
     def do_PUT(self):
         if not self.protocol_headers_ok():
             return
-        if self.path != "/syncs/progress":
+        if self.path != self.endpoint_path("/syncs/progress"):
             self.send_json(404, {"message": "Not found"})
             return
         username = self.authenticated_user()
@@ -245,13 +259,14 @@ class MockServer(ThreadingHTTPServer):
 
     def __init__(self, address, timestamp_start, quiet=False,
                  integration_fixtures=False, transcript=None,
-                 kosync_stall_seconds=2.0):
+                 kosync_stall_seconds=2.0, base_path="/"):
         super().__init__(address, KOSyncHandler)
         self.store = Store(timestamp_start, integration_fixtures)
         self.quiet = quiet
         self.transcript = transcript
         self.transcript_lock = threading.Lock()
         self.kosync_stall_seconds = kosync_stall_seconds
+        self.base_path = normalize_base_path(base_path)
 
     def record_event(self, event):
         if not self.transcript:
@@ -332,6 +347,36 @@ def self_test():
         server.shutdown()
         server.server_close()
         thread.join(timeout=3)
+    prefixed_server = MockServer(("127.0.0.1", 0), 1_700_000_000,
+                                 quiet=True, base_path="/kosync")
+    prefixed_thread = threading.Thread(target=prefixed_server.serve_forever,
+                                       daemon=True)
+    prefixed_thread.start()
+    prefixed_port = prefixed_server.server_address[1]
+    try:
+        status, payload = raw_request(prefixed_port, "GET",
+                                      "/kosync/users/auth")
+        assert status == 200 and json.loads(payload)["authorized"] == "OK"
+        assert raw_request(prefixed_port, "GET", "/kosync/users/auth",
+                           user=TEST_USER, key="wrong")[0] == 401
+        status, payload = raw_request(
+            prefixed_port, "GET",
+            "/kosync/syncs/progress/519220cea448409961e6b3081a36eca3")
+        assert status == 200 and json.loads(payload) == {}
+        assert raw_request(prefixed_port, "PUT", "/kosync/syncs/progress",
+                           record)[0] == 200
+        assert raw_request(prefixed_port, "GET",
+                           "/kosync/syncs/progress/519220cea448409961e6b3081a36eca3")[0] == 200
+        assert raw_request(prefixed_port, "GET", "/users/auth")[0] == 404
+        assert raw_request(prefixed_port, "GET", "/kosyncx/users/auth")[0] == 404
+        assert raw_request(prefixed_port, "GET",
+                           "/kosync/users/auth/extra")[0] == 404
+        assert raw_request(prefixed_port, "GET",
+                           "/kosync/syncs/progressx/document")[0] == 404
+    finally:
+        prefixed_server.shutdown()
+        prefixed_server.server_close()
+        prefixed_thread.join(timeout=3)
     print("KOSYNC MOCK SERVER SELF TEST OK")
 
 
@@ -343,15 +388,21 @@ def main():
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--integration-fixtures", action="store_true")
     parser.add_argument("--transcript")
+    parser.add_argument("--base-path", default="/",
+                        help="normalized KOSync deployment base path")
     parser.add_argument("--kosync-stall-seconds", type=float, default=2.0)
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
         self_test()
         return
-    server = MockServer((args.host, args.port), args.timestamp_start, args.quiet,
-                        args.integration_fixtures, args.transcript,
-                        args.kosync_stall_seconds)
+    try:
+        server = MockServer((args.host, args.port), args.timestamp_start,
+                            args.quiet, args.integration_fixtures,
+                            args.transcript, args.kosync_stall_seconds,
+                            args.base_path)
+    except ValueError as error:
+        parser.error(str(error))
     print(f"KOSYNC MOCK listening http://{args.host}:{args.port}", flush=True)
     try:
         server.serve_forever()

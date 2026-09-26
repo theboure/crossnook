@@ -110,6 +110,20 @@ behavior and redacted authorization events.
 
 The guarded physical mode is:
 
+Start the controlled HTTPS/KOSync mock with the same deployment base path that
+appears in the client URL. The mock accepts exact root deployment paths by
+default; this invocation explicitly exercises `/kosync`:
+
+```text
+python testapp/https_mock_server.py --host 0.0.0.0 --port 18443 \
+  --cert testapp/pki/server.crt --key testapp/pki/server.key \
+  --base-path /kosync --transcript <transcript-path> \
+  --sni-log <sni-log-path> --host-log <host-log-path> --quiet
+```
+
+The DNS mock must answer the HTTPS hostname with the controlled PC address, and
+the SNTP mock must be reachable from the Nook. Then run the diagnostic:
+
 ```text
 /tmp/crossnook-sync-activation-test --physical \
   /tmp/crossnook-card \
