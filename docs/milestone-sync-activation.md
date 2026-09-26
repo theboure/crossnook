@@ -142,6 +142,166 @@ settings transition, byte stability, outside-root sentinel, and actual zero
 progress operations. Use `rejected` instead of `accepted` with a controlled
 wrong synthetic key. Unmounting and repeating proves post-unmount refusal.
 
+### Physical Validation Evidence
+
+Physical validation was completed on a Nook Simple Touch. The external storage
+and test artifacts were:
+
+```text
+external card: /dev/block/mmcblk1
+sysfs dev: 179:16
+verified mount: /tmp/crossnook-card
+filesystem: vfat rw
+ARM artifact: testapp/crossnook-sync-activation-test
+ARM artifact SHA256: ae92846270f86648f1ffbc19aa54ab11500b13a8badb783ac87b0b1e1603af13
+test CA on Nook: /tmp/crossnook-testca.crt
+test CA SHA256: 003b795b4d19ba55b0ee2b2075bb4283299981132871a56cfb40bef197cec509
+```
+
+The controlled network setup was:
+
+```text
+DNS mock: 192.168.0.107:19153
+SNTP mock: 192.168.0.107:19123
+HTTPS/KOSync mock: secure.test.local:18443
+configured KOSync base URL: https://secure.test.local:18443/kosync
+HTTPS mock base path: /kosync
+```
+
+The Nook network checks passed:
+
+```text
+NETTEST DNS ROUTE host=secure.test.local address=192.168.0.107 server=0
+NETTEST HTTPS DNS GET 200 23 184 OK
+TIMETEST QUERY OK
+TIMETEST SYNC OK
+```
+
+The pre-mount and post-unmount storage gate refused persistence:
+
+```text
+SYNC ACTIVATION physical storage=unverified persistence=not-attempted
+RC=1
+
+CROSSNOOK_CARD_NOT_MOUNTED
+SYNC ACTIVATION physical storage=unverified persistence=not-attempted
+RC=1
+```
+
+Rejected and accepted cases used separate disposable roots. They MUST NOT share
+one root: physical fixture seeding is conditional, so rejected credentials could
+otherwise persist into the accepted case.
+
+The rejected clean root was:
+
+```text
+/tmp/crossnook-card/crossnook-sync-activation-30-rejected-clean
+```
+
+The first rejected run produced:
+
+```text
+SYNC ACTIVATION physical status=auth-rejected
+auth_get=1
+auth_ok=0
+saved=0
+visible=0
+progress_get=0
+progress_put=0
+credentials_stable=1
+identity_stable=1
+sentinel_stable=1
+enabled=0
+RC=0
+```
+
+The rejected settings hash before the repeat and after the identical repeat was
+`2ee002503757218e18cd13f2fcbac1dbc21990182ecb9911674c3a8482b79f47`. The mock
+transcript contained exactly these two redacted events after both runs, with no
+progress GET or PUT:
+
+```text
+{"authenticated":false,"endpoint":"auth","method":"GET"}
+{"authenticated":false,"endpoint":"auth","method":"GET"}
+```
+
+The accepted clean root was:
+
+```text
+/tmp/crossnook-card/crossnook-sync-activation-30-accepted-clean
+```
+
+The accepted run produced:
+
+```text
+SYNC ACTIVATION physical status=ok
+auth_get=1
+auth_ok=1
+saved=1
+visible=1
+progress_get=0
+progress_put=0
+credentials_stable=1
+identity_stable=1
+sentinel_stable=1
+enabled=1
+RC=0
+```
+
+The enabled settings hash was
+`27f000f972c9edccd7f594999b20aa23ca9d6cda0a5a9c3d6cb28f978f48c139`. The
+outside-root sentinel SHA256 was unchanged before and after at
+`c1ff99ebff3eabdb913fade983dccef3d741ee0413100fac67c000d03d64a43a`.
+The accepted transcript contained exactly one successful auth event:
+
+```text
+{"authenticated":true,"endpoint":"auth","method":"GET"}
+```
+
+Repeating activation on the already-enabled root returned before networking or
+saving:
+
+```text
+SYNC ACTIVATION physical status=already-enabled
+auth_get=0
+auth_ok=0
+saved=0
+visible=0
+progress_get=0
+progress_put=0
+credentials_stable=1
+identity_stable=1
+sentinel_stable=1
+enabled=1
+RC=0
+```
+
+The settings hash remained
+`27f000f972c9edccd7f594999b20aa23ca9d6cda0a5a9c3d6cb28f978f48c139`, and the
+transcript remained exactly one successful auth event.
+
+The physical run also found a test-infrastructure defect. Production correctly
+generated `<base-path>/users/auth`, but the mock recognized only `/users/auth`,
+so the prefixed physical request returned HTTP 404 and was reported as a service
+failure. Test-only base-path routing was fixed in commit `d660ff5`; the
+production ARM artifact SHA256 above did not change. The `build-https.sh` gate
+remains blocked by its pre-existing PKI reproducibility preflight and is not a
+milestone #30 regression.
+
+The evidence proves:
+
+- The verified external-storage gate runs before persistence.
+- Rejected remote auth cannot enable sync.
+- Rejected auth leaves settings byte-stable.
+- Accepted remote auth performs the final enable save.
+- Credentials and identity remain stable.
+- The outside-root sentinel remains stable.
+- Activation performs zero progress GET/PUT operations.
+- Repeated activation of an already-enabled profile performs no auth/network operation and no settings save.
+- Post-unmount persistence is refused.
+
+**PHYSICAL VALIDATION: PASS**
+
 ## Deferred
 
 Deactivation, account switching, account deletion, account-entry UI, and Reader
