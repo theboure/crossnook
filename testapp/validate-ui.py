@@ -67,8 +67,10 @@ def validate(path, kind):
         ok &= check("HOME: tite band ink (y 25..90)", band_ink(ink, 25, 90) > 1000)
         ok &= check("HOME: button outline band ink (y 210..255)",
                     band_ink(ink, 210, 255) > 400)
-        ok &= check("HOME: no ink below button (y 260..799)",
-                    band_ink(ink, 260, H) == 0)
+        ok &= check("HOME: Sync account entry is visible",
+                    band_ink(ink, 410, 470) > 0)
+        ok &= check("HOME: no ink below Sync account entry (y 470..799)",
+                    band_ink(ink, 470, H) == 0)
     elif kind == "READER":
         ok &= check("READER: title band ink (y 25..75)",
                     band_ink(ink, 25, 75) > 500)

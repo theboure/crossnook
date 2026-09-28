@@ -17,6 +17,7 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$REPO_WIN:/io" -w /io "$IMG" bash -c '
   arm-linux-musleabi-gcc $CFLAGS -Werror -c /io/src/app/reader_conflict.c -o reader_conflict.o
   arm-linux-musleabi-gcc $CFLAGS -Werror -c /io/src/app/sync-conflict-ui-test.c -o sync-conflict-ui-test.o
   arm-linux-musleabi-gcc $CFLAGS -Werror -c /io/src/ui/ui.c -o ui.o
+  arm-linux-musleabi-gcc $CFLAGS -Werror -c /io/src/ui/account_text_input.c -o account_text_input.o
   if ! arm-linux-musleabi-nm -u reader_conflict.o | grep -q " cn_sync_push_local_current_book$" ||
      ! arm-linux-musleabi-nm -u reader_conflict.o | grep -q " cn_sync_pull_remote_current_book$" ||
      ! arm-linux-musleabi-nm -u reader_conflict.o | grep -q " cn_reader_sync_apply_persisted$"; then
@@ -37,7 +38,7 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$REPO_WIN:/io" -w /io "$IMG" bash -c '
     -I/opt/freetype/include/freetype2 \
     -c /io/src/reader/reader.cpp -o reader.o
   arm-linux-musleabi-g++ -static -no-pie -fno-pie -march=armv5te -O2 \
-    reader_conflict.o sync-conflict-ui-test.o reader_sync.o ui.o canvas.o \
+     reader_conflict.o sync-conflict-ui-test.o reader_sync.o ui.o account_text_input.o canvas.o \
     text.o library.o book_identity.o progress_store.o sync_controller.o \
     sync_pull_controller.o sync_push_controller.o kosync_pull.o kosync_push.o \
     kosync_sync.o kosync_policy.o kosync.o settings_store.o \

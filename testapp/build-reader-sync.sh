@@ -16,7 +16,7 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$REPO_WIN:/io" -w /io "$IMG" bash -c '
   CFLAGS="-std=c11 -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L -static -no-pie -fno-pie -march=armv5te -O2 -Wall -Wextra -I/io/src -I/opt/bearssl/include -I/opt/freetype/include/freetype2"
   arm-linux-musleabi-gcc $CFLAGS -Werror -c /io/src/app/reader_sync.c -o reader-sync.o
   arm-linux-musleabi-gcc $CFLAGS -Werror -c /io/src/app/reader-sync-test.c -o reader-sync-test.o
-  for file in ui/ui graphics/canvas graphics/text library/library progress/book_identity progress/progress_store sync/sync_controller sync/kosync_sync sync/kosync_policy sync/kosync settings/settings_store credentials/credential_store storage/storage_layout platform/storage_verify net/netsimple net/tlssimple net/dnssimple time/timesimple book/koreader_identity book/md5; do
+  for file in ui/ui ui/account_text_input graphics/canvas graphics/text library/library progress/book_identity progress/progress_store sync/sync_controller sync/kosync_sync sync/kosync_policy sync/kosync settings/settings_store credentials/credential_store storage/storage_layout platform/storage_verify net/netsimple net/tlssimple net/dnssimple time/timesimple book/koreader_identity book/md5; do
     arm-linux-musleabi-gcc $CFLAGS -c "/io/src/$file.c" -o "$(basename "$file").o"
   done
   arm-linux-musleabi-g++ -std=c++17 -static -no-pie -fno-pie -march=armv5te \
@@ -25,7 +25,7 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$REPO_WIN:/io" -w /io "$IMG" bash -c '
     -I/opt/freetype/include/freetype2 \
     -c /io/src/reader/reader.cpp -o reader.o
   arm-linux-musleabi-g++ -static -no-pie -fno-pie -march=armv5te -O2 \
-    reader-sync.o reader-sync-test.o ui.o canvas.o text.o library.o \
+    reader-sync.o reader-sync-test.o ui.o account_text_input.o canvas.o text.o library.o \
     book_identity.o progress_store.o sync_controller.o kosync_sync.o \
     kosync_policy.o kosync.o settings_store.o credential_store.o \
     storage_layout.o storage_verify.o netsimple.o tlssimple.o dnssimple.o \

@@ -30,6 +30,7 @@ MSYS_NO_PATHCONV=1 docker run --rm \
 
     arm-linux-musleabi-gcc $CFLAGS -c src/app/ui-test.c -o /tmp/ui-test.o
     arm-linux-musleabi-gcc $CFLAGS -c src/ui/ui.c -o /tmp/ui.o
+    arm-linux-musleabi-gcc $CFLAGS -c src/ui/account_text_input.c -o /tmp/account_text_input.o
     arm-linux-musleabi-gcc $CFLAGS -c src/library/library.c -o /tmp/library.o
     arm-linux-musleabi-gcc $CFLAGS -c src/platform/nook/input.c -o /tmp/input.o
     arm-linux-musleabi-gcc $CFLAGS -c src/platform/nook/display.c -o /tmp/display.o
@@ -41,7 +42,7 @@ MSYS_NO_PATHCONV=1 docker run --rm \
     # fallback paths are exercised without attaching one at runtime.
     arm-linux-musleabi-g++ -static -no-pie -fno-pie -O2 -Wall -Wextra \
       -o testapp/crossnook-ui-test \
-      /tmp/ui-test.o /tmp/ui.o /tmp/library.o /tmp/input.o /tmp/display.o \
+      /tmp/ui-test.o /tmp/ui.o /tmp/account_text_input.o /tmp/library.o /tmp/input.o /tmp/display.o \
       /tmp/text.o /tmp/canvas.o /tmp/reader.o \
       /opt/crengine/lib/libcrengine.a /opt/freetype/lib/libfreetype.a \
       /opt/zlib/lib/libz.a /opt/xxhash/lib/libxxhash.a -lm

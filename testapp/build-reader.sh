@@ -55,6 +55,7 @@ MSYS_NO_PATHCONV=1 docker run --rm \
     arm-linux-musleabi-gcc $CFLAGS -c /io/src/progress/book_identity.c -o book-identity.o
     arm-linux-musleabi-gcc $CFLAGS -c /io/src/progress/progress_store.c -o progress-store.o
     arm-linux-musleabi-gcc $CFLAGS -c /io/src/ui/ui.c -o ui.o
+    arm-linux-musleabi-gcc $CFLAGS -c /io/src/ui/account_text_input.c -o account_text_input.o
     arm-linux-musleabi-gcc $CFLAGS -c /io/src/app/reader-test.c -o app.o
 
     arm-linux-musleabi-g++ -std=c++17 -static -no-pie -fno-pie \
@@ -65,7 +66,7 @@ MSYS_NO_PATHCONV=1 docker run --rm \
 
     arm-linux-musleabi-g++ -std=c++17 -static -no-pie -fno-pie \
       -O2 -Wall -Wextra \
-      app.o ui.o library.o book-identity.o progress-store.o \
+      app.o ui.o account_text_input.o library.o book-identity.o progress-store.o \
       input.o display.o canvas.o text.o reader.o \
       -o /io/testapp/crossnook-reader-test \
       /opt/crengine/lib/libcrengine.a /opt/freetype/lib/libfreetype.a \

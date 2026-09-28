@@ -26,7 +26,7 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$REPO_WIN:/io" -w /io "$IMG" bash -c '
     echo "FAIL: push references GET or normal sync"
     exit 1
   fi
-  for file in app/reader_sync ui/ui graphics/canvas graphics/text library/library progress/book_identity progress/progress_store sync/sync_controller sync/sync_pull_controller sync/kosync_pull sync/kosync_sync sync/kosync_policy sync/kosync settings/settings_store credentials/credential_store storage/storage_layout platform/storage_verify net/netsimple net/tlssimple net/dnssimple time/timesimple book/koreader_identity book/md5; do
+  for file in app/reader_sync ui/ui ui/account_text_input graphics/canvas graphics/text library/library progress/book_identity progress/progress_store sync/sync_controller sync/sync_pull_controller sync/kosync_pull sync/kosync_sync sync/kosync_policy sync/kosync settings/settings_store credentials/credential_store storage/storage_layout platform/storage_verify net/netsimple net/tlssimple net/dnssimple time/timesimple book/koreader_identity book/md5; do
     arm-linux-musleabi-gcc $CFLAGS -c "/io/src/$file.c" -o "$(basename "$file").o"
   done
   arm-linux-musleabi-g++ -std=c++17 -static -no-pie -fno-pie -march=armv5te \
@@ -36,7 +36,7 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$REPO_WIN:/io" -w /io "$IMG" bash -c '
     -c /io/src/reader/reader.cpp -o reader.o
   arm-linux-musleabi-g++ -static -no-pie -fno-pie -march=armv5te -O2 \
     kosync_push.o sync_push_controller.o local-push-test.o reader_sync.o \
-    ui.o canvas.o text.o library.o book_identity.o progress_store.o \
+    ui.o account_text_input.o canvas.o text.o library.o book_identity.o progress_store.o \
     sync_controller.o sync_pull_controller.o kosync_pull.o kosync_sync.o \
     kosync_policy.o kosync.o settings_store.o credential_store.o \
     storage_layout.o storage_verify.o netsimple.o tlssimple.o dnssimple.o \

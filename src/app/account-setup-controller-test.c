@@ -476,6 +476,14 @@ static int smoke(void)
           "enabled fast path loads no secrets or profile");
 
     reset_faults();
+    report = cn_account_setup_inspect(&layout);
+    check(report.status == CN_ACCOUNT_SETUP_ALREADY_ENABLED &&
+              report.local_state == CN_ACCOUNT_SETUP_LOCAL_ENABLED &&
+              credential_loads == 0 && identity_loads == 0 && auth_calls == 0 &&
+              settings_saves == 0 && credential_saves == 0,
+          "read-only enabled inspection preserves secret-free fast path");
+
+    reset_faults();
     check(mkdir_root(workspace, 2, root, sizeof root, &layout),
           "rejected root prepared");
     account_input = input(TEST_URL, TEST_DEVICE, TEST_WRONG_PASSWORD);
@@ -497,6 +505,13 @@ static int smoke(void)
     check(mkdir_root(workspace, 3, root, sizeof root, &layout) &&
               seed_disabled(&layout, TEST_URL, TEST_DEVICE, TEST_PASSWORD),
           "complete disabled root seeded");
+    reset_faults();
+    report = cn_account_setup_inspect(&layout);
+    check(report.local_state == CN_ACCOUNT_SETUP_LOCAL_COMPLETE_DISABLED &&
+              report.status == CN_ACCOUNT_SETUP_PRECONDITION &&
+              credential_loads == 1 && auth_calls == 0 && settings_saves == 0 &&
+              credential_saves == 0,
+          "disabled inspection classifies account read-only");
     reset_faults();
     if (!credentials_path(&layout, path, sizeof path) ||
         !snapshot(path, before, sizeof before, &before_length))

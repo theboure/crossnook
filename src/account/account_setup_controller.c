@@ -430,6 +430,30 @@ cn_account_setup_report cn_account_setup_activate_existing(
     return prepare_and_activate(report, prepared_layout, runtime);
 }
 
+cn_account_setup_report cn_account_setup_inspect(
+    const cn_storage_layout *prepared_layout)
+{
+    cn_account_setup_report report = initial_report();
+    cn_settings settings;
+    observation_result result;
+    memset(&settings, 0, sizeof settings);
+    report.stage = CN_ACCOUNT_SETUP_STAGE_PREFLIGHT;
+    result = observe_state(prepared_layout, &report, &settings);
+    clear_bytes(&settings, sizeof settings);
+    if (result == OBSERVATION_CORRUPT) {
+        report.status = CN_ACCOUNT_SETUP_CORRUPT_OR_UNSUPPORTED_STATE;
+    } else if (result == OBSERVATION_UNREADABLE) {
+        report.status = CN_ACCOUNT_SETUP_PRECONDITION;
+    } else if (report.local_state == CN_ACCOUNT_SETUP_LOCAL_ENABLED) {
+        report.status = CN_ACCOUNT_SETUP_ALREADY_ENABLED;
+    } else if (report.local_state == CN_ACCOUNT_SETUP_LOCAL_ORPHAN_CREDENTIALS) {
+        report.status = CN_ACCOUNT_SETUP_INCOMPLETE_STATE;
+    } else {
+        report.status = CN_ACCOUNT_SETUP_PRECONDITION;
+    }
+    return report;
+}
+
 const char *cn_account_setup_status_name(cn_account_setup_status status)
 {
     static const char *const names[CN_ACCOUNT_SETUP_STATUS_COUNT] = {

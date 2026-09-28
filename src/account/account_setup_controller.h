@@ -90,6 +90,11 @@ cn_account_setup_report cn_account_setup_activate_existing(
     const cn_storage_layout *prepared_layout,
     const cn_sync_activation_runtime *runtime);
 
+/* Read-only local classification. Never creates identity, writes or uses the
+ * network; enabled settings are recognized before credentials are loaded. */
+cn_account_setup_report cn_account_setup_inspect(
+    const cn_storage_layout *prepared_layout);
+
 const char *cn_account_setup_status_name(cn_account_setup_status status);
 const char *cn_account_setup_stage_name(cn_account_setup_stage stage);
 const char *cn_account_setup_local_state_name(cn_account_setup_local_state state);

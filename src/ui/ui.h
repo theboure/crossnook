@@ -32,11 +32,51 @@
 #ifndef CN_UI_UI_H
 #define CN_UI_UI_H
 
+#include <stddef.h>
+
 #include "graphics/canvas.h"
 #include "graphics/text.h"
 #include "library/library.h"
 #include "platform/nook/input.h"
 #include "reader/reader.h"
+typedef struct cn_ui_account_input {
+    const char *base_url;
+    const char *device_name;
+    const char *username;
+    const unsigned char *password;
+    size_t password_length;
+} cn_ui_account_input;
+
+typedef enum cn_ui_account_result {
+    CN_UI_ACCOUNT_RESULT_OTHER = 0,
+    CN_UI_ACCOUNT_RESULT_ACTIVATED,
+    CN_UI_ACCOUNT_RESULT_ALREADY_ENABLED,
+    CN_UI_ACCOUNT_RESULT_INVALID_INPUT,
+    CN_UI_ACCOUNT_RESULT_PRECONDITION,
+    CN_UI_ACCOUNT_RESULT_INCOMPLETE,
+    CN_UI_ACCOUNT_RESULT_CORRUPT,
+    CN_UI_ACCOUNT_RESULT_BOOTSTRAP_FAILED,
+    CN_UI_ACCOUNT_RESULT_BOOTSTRAP_UNCERTAIN,
+    CN_UI_ACCOUNT_RESULT_IDENTITY_FAILED,
+    CN_UI_ACCOUNT_RESULT_IDENTITY_UNCERTAIN,
+    CN_UI_ACCOUNT_RESULT_AUTH_REJECTED,
+    CN_UI_ACCOUNT_RESULT_INFRASTRUCTURE_FAILED,
+    CN_UI_ACCOUNT_RESULT_SAVE_FAILED,
+    CN_UI_ACCOUNT_RESULT_ACTIVATION_UNCERTAIN,
+    CN_UI_ACCOUNT_RESULT_PROFILE_UNAVAILABLE,
+    CN_UI_ACCOUNT_RESULT_ACTIVATION_FAILED
+} cn_ui_account_result;
+
+typedef enum cn_ui_account_local {
+    CN_UI_ACCOUNT_LOCAL_UNKNOWN = 0,
+    CN_UI_ACCOUNT_LOCAL_NO_ACCOUNT,
+    CN_UI_ACCOUNT_LOCAL_PARTIAL_DISABLED,
+    CN_UI_ACCOUNT_LOCAL_ORPHAN_CREDENTIALS,
+    CN_UI_ACCOUNT_LOCAL_COMPLETE_DISABLED,
+    CN_UI_ACCOUNT_LOCAL_ENABLED,
+    CN_UI_ACCOUNT_LOCAL_CORRUPT,
+    CN_UI_ACCOUNT_LOCAL_UNREADABLE
+} cn_ui_account_local;
 
 #define CN_UI_POWER_LONG_MS 2000
 
@@ -52,8 +92,18 @@ typedef enum cn_ui_state {
     CN_UI_READER_TEST,
     CN_UI_LIBRARY,
     CN_UI_SELECTED_BOOK,
-    CN_UI_READER
+    CN_UI_READER,
+    CN_UI_ACCOUNT_SETUP
 } cn_ui_state;
+
+typedef enum cn_ui_account_action {
+    CN_UI_ACCOUNT_NONE = 0,
+    CN_UI_ACCOUNT_INSPECT,
+    CN_UI_ACCOUNT_SUBMIT_NEW_OR_RESUME,
+    CN_UI_ACCOUNT_ACTIVATE_EXISTING,
+    CN_UI_ACCOUNT_REPLACE_DISABLED,
+    CN_UI_ACCOUNT_RECHECK
+} cn_ui_account_action;
 
 typedef struct cn_ui cn_ui;
 
@@ -111,6 +161,18 @@ int cn_ui_show_sync_feedback(cn_ui *ui, cn_ui_sync_feedback feedback);
 int cn_ui_sync_modal_active(const cn_ui *ui);
 int cn_ui_sync_selection(const cn_ui *ui); /* 0 local, 1 remote, 2 cancel; -1 otherwise */
 cn_ui_sync_action cn_ui_take_sync_action(cn_ui *ui);
+
+/* Account actions are one-shot and contain no report/account material. The
+ * application borrows the input view only until the controller call returns. */
+cn_ui_account_action cn_ui_account_take_action(cn_ui *ui);
+int cn_ui_account_action_pending(const cn_ui *ui);
+int cn_ui_account_get_input(cn_ui *ui, cn_ui_account_input *input);
+void cn_ui_account_set_result(cn_ui *ui, cn_ui_account_result result,
+                              cn_ui_account_local local_state);
+void cn_ui_account_clear_password(cn_ui *ui);
+void cn_ui_account_prefill(cn_ui *ui, const char *base_url,
+                           const char *device_name);
+int cn_ui_account_local_state(const cn_ui *ui);
 
 /* Number of rows that fit on the 600x800 library viewport. */
 int cn_ui_lib_rows(void);
