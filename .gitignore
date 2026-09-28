@@ -21,6 +21,9 @@ testapp/crossnook-device-identity-test
 testapp/crossnook-account-bootstrap-test
 testapp/crossnook-persisted-sync-profile-test
 testapp/crossnook-profile-sync-controller-test
+testapp/crossnook-account-setup-controller-test
+testapp/crossnook-account-setup-ui
+testapp/crossnook-account-setup-ui-test
 testapp/crossnook-bookid-test
 testapp/crossnook-net-test
 testapp/crossnook-kosync-test
@@ -31,6 +34,11 @@ work/
 
 # Internal AI/LLM project notes
 *master briefing for coding LLM.md
+
+# Local milestone review snapshots
+/milestone32-prephysical-review.txt
+/milestone32-review-full.txt
+/milestone32-review.diff
 
 # Compiled binaries / objects
 *.o
